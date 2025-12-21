@@ -46,7 +46,7 @@ class BlogGenerator:
         
         default_config = {
             "tone": "professional",
-            "reading_level": "college",
+            "reading_level": "executive",
             "target_audience": "enterprise professionals",
             "min_word_count": 1500,
             "max_word_count": 3000,
