@@ -1,6 +1,15 @@
 """Writer Agent: Writes blog content section by section."""
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from .base import BaseAgent
+import os
+import requests
+from urllib.parse import quote, urljoin, urlparse
+import urllib3
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
 
 
 class WriterAgent(BaseAgent):
@@ -103,6 +112,10 @@ class WriterAgent(BaseAgent):
         conclusion = self._write_conclusion(thesis, tone, reading_level, topic, min(150, words_per_section))
         content["Conclusion"] = conclusion
         total_word_count += len(conclusion.split())
+        
+        # Add images to relevant sections (at least 1 per document)
+        citations = input_data.get("citations", [])
+        content = self._add_images_to_content(content, topic, outline, citations)
         
         # Check if we need to adjust content to meet word count requirements
         if total_word_count < min_word_count:
@@ -220,7 +233,7 @@ For other sections:
 - Use citations naturally (e.g., "According to [Source]...")
 - Write engaging, informative content with actionable insights about {topic}
 - Provide real value - explain concepts deeply, give concrete examples, offer detailed solutions
-- Include relevant image suggestions in markdown format: ![Alt text](image-url) when appropriate
+- DO NOT include image markdown syntax in your response - images will be added automatically where appropriate
 - Write in a conversational yet professional style
 - Use bullet points and lists for clarity
 - Include specific numbers, metrics, or technical details when relevant
@@ -327,12 +340,520 @@ Requirements:
 - Include specific configuration examples, code snippets, or step-by-step guidance when relevant
 - Maintain the same tone and style as the existing content
 - Focus on {topic} - avoid generic information
-- Include relevant image suggestions if appropriate: ![Alt text](image-url)
+- DO NOT include image markdown syntax - images are added automatically
 - Use bullet points and lists for clarity
 - Make it comprehensive and actionable
 
 Write the expanded content, maintaining ALL existing content and adding substantial new detail. Do not remove or summarize existing content."""
         
         return self.call_llm(prompt)
+    
+    def _add_images_to_content(self, content: Dict[str, str], topic: str, outline: List[Dict], citations: List[Dict] = None) -> Dict[str, str]:
+        """Add images to relevant sections from citations, Wikimedia Commons, or placeholders. Ensure at least 1 image per document."""
+        enhanced_content = content.copy()
+        images_added = 0
+        citations = citations or []
+        
+        # Determine which sections would benefit from images
+        image_candidates = []
+        
+        for section_title, section_content in content.items():
+            # Skip introduction and conclusion for images (usually not needed)
+            if section_title in ["Introduction", "Conclusion"]:
+                continue
+            
+            # Check if section would benefit from an image
+            if self._section_needs_image(section_title, section_content, topic):
+                image_candidates.append(section_title)
+        
+        # If no candidates found, add at least one to the most relevant section
+        if not image_candidates and outline:
+            # Find the first substantial section (not intro/conclusion)
+            for section in outline:
+                section_title = section.get("section_title", "")
+                if section_title in content and section_title not in ["Introduction", "Conclusion"]:
+                    image_candidates.append(section_title)
+                    break
+        
+        # Add images to candidate sections (max 3 to keep focused)
+        for section_title in image_candidates[:3]:
+            if section_title in enhanced_content:
+                section_content = enhanced_content[section_title]
+                image_markdown = self._generate_image_url(section_title, topic, citations, section_content)
+                enhanced_content[section_title] = self._insert_image_in_section(
+                    enhanced_content[section_title],
+                    image_markdown
+                )
+                images_added += 1
+        
+        # Ensure at least 1 image if none were added
+        if images_added == 0 and content:
+            # Add to first substantial section
+            for section_title in content.keys():
+                if section_title not in ["Introduction", "Conclusion"]:
+                    section_content = content[section_title]
+                    image_markdown = self._generate_image_url(section_title, topic, citations, section_content)
+                    enhanced_content[section_title] = self._insert_image_in_section(
+                        enhanced_content[section_title],
+                        image_markdown
+                    )
+                    images_added += 1
+                    break
+        
+        if images_added > 0:
+            print(f"📷 Added {images_added} image(s) to relevant sections")
+        
+        return enhanced_content
+    
+    def _section_needs_image(self, section_title: str, section_content: str, topic: str) -> bool:
+        """Determine if a section would benefit from an image."""
+        title_lower = section_title.lower()
+        content_lower = section_content.lower()
+        
+        # Keywords that suggest an image would be helpful
+        image_keywords = [
+            "architecture", "diagram", "flowchart", "process", "workflow",
+            "comparison", "before and after", "versus", "vs", "difference",
+            "structure", "components", "system", "pipeline", "flow",
+            "configuration", "setup", "installation", "steps",
+            "mistake", "error", "problem", "solution", "fix",
+            "example", "screenshot", "visual", "illustration"
+        ]
+        
+        # Check title
+        if any(keyword in title_lower for keyword in image_keywords):
+            return True
+        
+        # Check content for image-worthy concepts
+        if any(keyword in content_lower for keyword in image_keywords):
+            # Only if content is substantial (not just a mention)
+            if len(section_content.split()) > 100:
+                return True
+        
+        # Technical sections often benefit from diagrams
+        # Generic technical indicators that suggest visual content would be helpful
+        technical_indicators = ["system", "cluster", "migration", "cost", "customization", "implementation", "deployment", "integration", "infrastructure", "platform", "service", "api", "database", "network", "cloud"]
+        if any(indicator in title_lower or indicator in content_lower[:200] for indicator in technical_indicators):
+            if len(section_content.split()) > 150:
+                return True
+        
+        # If section is substantial (200+ words), it likely benefits from an image
+        if len(section_content.split()) > 200:
+            return True
+        
+        return False
+    
+    def _generate_image_url(self, section_title: str, topic: str, citations: List[Dict] = None, section_content: str = "") -> str:
+        """Generate an image URL from citations or Wikimedia Commons, or return description only."""
+        # Generate appropriate image description using LLM based on section context
+        image_description = self._get_image_description(section_title, topic, section_content)
+        citations = citations or []
+        
+        print(f"🔍 [IMAGE SEARCH] Section: '{section_title}' | Description: '{image_description}'")
+        print(f"   📚 Searching {len(citations)} citation(s) for images...")
+        
+        # Strategy 1: Try to extract image from citations
+        image_url = self._extract_image_from_citations(section_title, topic, citations)
+        
+        # Strategy 2: Try Wikimedia Commons for technical diagrams
+        if not image_url:
+            print(f"   🌐 No images found in citations. Searching Wikimedia Commons...")
+            image_url = self._fetch_wikimedia_image(image_description, topic)
+        else:
+            print(f"   ✅ Using image from citations")
+        
+        # Format markdown with appropriate attribution
+        # Use shorter alt text for markdown, but keep full description in caption
+        alt_text = self._get_short_alt_text(section_title, topic)
+        
+        if image_url:
+            if image_url.startswith("https://upload.wikimedia.org"):
+                print(f"   ✅ FINAL: Using Wikimedia Commons image")
+                return f"\n![{alt_text}]({image_url})\n\n*{image_description}*\n\n<!-- Image from Wikimedia Commons (CC license) -->\n"
+            else:
+                print(f"   ✅ FINAL: Using citation image")
+                return f"\n![{alt_text}]({image_url})\n\n*{image_description}*\n\n<!-- Image from reference sources -->\n"
+        else:
+            # No image found - return description only without any URL
+            print(f"   ⚠️  FINAL: No image found. Using description only")
+            return f"\n<!-- Image needed: {image_description} -->\n\n*[Image suggestion: {image_description}]*\n"
+    
+    def _extract_image_from_citations(self, section_title: str, topic: str, citations: List[Dict]) -> Optional[str]:
+        """Extract image URLs by fetching and parsing web pages from citations."""
+        import re
+        
+        found_images = []
+        ignored_images = []
+        
+        # Search through citations - fetch actual web pages
+        for i, citation in enumerate(citations[:5], 1):  # Limit to first 5 to avoid too many requests
+            url = citation.get("url", "")
+            title = citation.get("title", "Unknown")
+            
+            if not url or not url.startswith(('http://', 'https://')):
+                continue
+            
+            print(f"      📄 Citation {i}/{min(5, len(citations))}: {title[:60]}...")
+            print(f"         URL: {url[:80]}...")
+            print(f"         🔍 Fetching webpage to extract images...")
+            
+            # Fetch the web page
+            image_url = self._fetch_images_from_webpage(url, section_title, topic)
+            
+            if image_url:
+                print(f"         ✅ FOUND: {image_url[:70]}...")
+                return image_url
+            else:
+                print(f"         ℹ️  No suitable images found on this page")
+        
+        if not found_images and not ignored_images:
+            print(f"      ℹ️  No image URLs found in any citations")
+        elif found_images:
+            print(f"      📊 Summary: Found {len(found_images)} image(s), ignored {len(ignored_images)} icon(s)")
+        
+        return None
+    
+    def _fetch_images_from_webpage(self, url: str, section_title: str, topic: str) -> Optional[str]:
+        """Fetch a webpage and extract relevant image URLs."""
+        if not BS4_AVAILABLE:
+            print(f"         ⚠️  BeautifulSoup4 not available. Install with: pip install beautifulsoup4 lxml")
+            return None
+        
+        try:
+            # Handle SSL verification
+            ssl_verify = os.getenv("SSL_VERIFY", "true").lower() == "true"
+            if not ssl_verify:
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            
+            # Set headers to mimic a browser
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+            }
+            
+            # Fetch the webpage with timeout
+            response = requests.get(url, headers=headers, timeout=10, verify=ssl_verify, allow_redirects=True)
+            
+            if response.status_code != 200:
+                print(f"         ⚠️  HTTP {response.status_code} - Could not fetch page")
+                return None
+            
+            # Parse HTML
+            soup = BeautifulSoup(response.content, 'lxml')
+            
+            # Find all image tags
+            images = soup.find_all('img')
+            
+            if not images:
+                return None
+            
+            print(f"         📷 Found {len(images)} image(s) on page, analyzing...")
+            
+            # Extract and filter image URLs
+            candidate_images = []
+            
+            for img in images:
+                # Get image source
+                img_src = img.get('src') or img.get('data-src') or img.get('data-lazy-src')
+                if not img_src:
+                    continue
+                
+                # Convert relative URLs to absolute
+                img_url = urljoin(url, img_src)
+                
+                # Get image attributes for filtering
+                img_alt = (img.get('alt') or '').lower()
+                img_class = (img.get('class') or [])
+                img_id = (img.get('id') or '').lower()
+                img_width = img.get('width')
+                img_height = img.get('height')
+                
+                # Skip obvious icons/logos/favicons
+                skip_keywords = ['icon', 'logo', 'favicon', 'avatar', 'thumbnail', 'thumb', 'button', 'badge']
+                if any(keyword in img_url.lower() or keyword in img_alt or keyword in img_id for keyword in skip_keywords):
+                    continue
+                
+                # Skip very small images (likely icons)
+                if img_width and img_height:
+                    try:
+                        width = int(img_width)
+                        height = int(img_height)
+                        if width < 200 or height < 200:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                
+                # Check if image is relevant to section/topic
+                relevance_score = self._calculate_image_relevance(img_url, img_alt, section_title, topic)
+                
+                candidate_images.append({
+                    'url': img_url,
+                    'alt': img_alt,
+                    'relevance': relevance_score,
+                    'width': img_width,
+                    'height': img_height
+                })
+            
+            if not candidate_images:
+                return None
+            
+            # Sort by relevance score
+            candidate_images.sort(key=lambda x: x['relevance'], reverse=True)
+            
+            # Return the most relevant image
+            best_image = candidate_images[0]
+            print(f"         ✅ Selected image (relevance: {best_image['relevance']:.2f}): {best_image['alt'][:50] if best_image['alt'] else 'No alt text'}")
+            
+            return best_image['url']
+            
+        except requests.exceptions.RequestException as e:
+            print(f"         ⚠️  Network error fetching page: {str(e)[:100]}")
+            return None
+        except Exception as e:
+            print(f"         ⚠️  Error parsing webpage: {str(e)[:100]}")
+            return None
+    
+    def _calculate_image_relevance(self, img_url: str, img_alt: str, section_title: str, topic: str) -> float:
+        """Calculate relevance score for an image based on URL, alt text, section, and topic."""
+        score = 0.0
+        
+        # Extract keywords from section title and topic
+        section_keywords = set(section_title.lower().split())
+        topic_keywords = set(topic.lower().split())
+        all_keywords = section_keywords.union(topic_keywords)
+        
+        # Check URL for relevant keywords
+        url_lower = img_url.lower()
+        for keyword in all_keywords:
+            if len(keyword) > 3 and keyword in url_lower:
+                score += 2.0
+        
+        # Check alt text for relevant keywords
+        if img_alt:
+            for keyword in all_keywords:
+                if len(keyword) > 3 and keyword in img_alt:
+                    score += 3.0
+        
+        # Boost score for common image types that are usually relevant
+        image_type_keywords = ['diagram', 'chart', 'graph', 'illustration', 'infographic', 'visualization', 
+                              'architecture', 'flow', 'process', 'workflow', 'comparison', 'analysis']
+        for keyword in image_type_keywords:
+            if keyword in url_lower or (img_alt and keyword in img_alt):
+                score += 1.5
+        
+        # Penalize common non-content images
+        non_content_keywords = ['ad', 'advertisement', 'banner', 'promo', 'social-share', 'share-button']
+        for keyword in non_content_keywords:
+            if keyword in url_lower or (img_alt and keyword in img_alt):
+                score -= 5.0
+        
+        return max(0.0, score)
+    
+    def _fetch_wikimedia_image(self, image_description: str, topic: str) -> Optional[str]:
+        """Fetch a technical diagram from Wikimedia Commons API."""
+        try:
+            # Build search query for technical topics
+            search_query = f"{topic} {image_description}".strip()[:100]
+            print(f"      🔎 Wikimedia Commons search query: '{search_query}'")
+            
+            # Wikimedia Commons API endpoint (no API key required)
+            url = "https://commons.wikimedia.org/w/api.php"
+            params = {
+                "action": "query",
+                "format": "json",
+                "list": "search",
+                "srsearch": search_query,
+                "srnamespace": 6,  # File namespace (images)
+                "srlimit": 5,
+                "srprop": "size|timestamp"
+            }
+            
+            # Handle SSL verification
+            ssl_verify = os.getenv("SSL_VERIFY", "true").lower() == "true"
+            if not ssl_verify:
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                os.environ["REQUESTS_CA_BUNDLE"] = ""
+                os.environ["CURL_CA_BUNDLE"] = ""
+                os.environ["PYTHONHTTPSVERIFY"] = "0"
+            
+            # Make API request
+            response = requests.get(url, params=params, timeout=10, verify=ssl_verify)
+            
+            if response.status_code == 200:
+                data = response.json()
+                search_results = data.get("query", {}).get("search", [])
+                
+                if search_results:
+                    print(f"      📊 Found {len(search_results)} result(s) in Wikimedia Commons:")
+                    for idx, result in enumerate(search_results[:5], 1):
+                        file_title = result.get("title", "")
+                        size = result.get("size", 0)
+                        print(f"         {idx}. {file_title[:70]}... (size: {size} bytes)")
+                    
+                    # Get the first result
+                    file_title = search_results[0].get("title", "")
+                    print(f"      🔗 Fetching URL for: {file_title[:70]}...")
+                    
+                    # Get image URL for this file
+                    image_url = self._get_wikimedia_file_url(file_title, ssl_verify)
+                    
+                    if image_url:
+                        print(f"      ✅ Retrieved image URL: {image_url[:80]}...")
+                        return image_url
+                    else:
+                        print(f"      ⚠️  Could not retrieve image URL for file")
+                else:
+                    print(f"      ℹ️  No results found in Wikimedia Commons")
+            else:
+                print(f"      ⚠️  Wikimedia Commons API returned status {response.status_code}")
+            
+            return None
+            
+        except Exception as e:
+            print(f"      ❌ Wikimedia Commons API error: {e}")
+            return None
+        finally:
+            # Clean up env vars if we disabled verification
+            if not os.getenv("SSL_VERIFY", "true").lower() == "true":
+                for var in ["REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "PYTHONHTTPSVERIFY"]:
+                    if var in os.environ:
+                        del os.environ[var]
+    
+    def _get_wikimedia_file_url(self, file_title: str, ssl_verify: bool) -> Optional[str]:
+        """Get the direct image URL for a Wikimedia Commons file."""
+        try:
+            url = "https://commons.wikimedia.org/w/api.php"
+            params = {
+                "action": "query",
+                "format": "json",
+                "titles": file_title,
+                "prop": "imageinfo",
+                "iiprop": "url",
+                "iiurlwidth": 800  # Prefer 800px width
+            }
+            
+            response = requests.get(url, params=params, timeout=10, verify=ssl_verify)
+            
+            if response.status_code == 200:
+                data = response.json()
+                pages = data.get("query", {}).get("pages", {})
+                
+                for page_id, page_data in pages.items():
+                    imageinfo = page_data.get("imageinfo", [])
+                    if imageinfo:
+                        # Get the URL (prefer thumbnail if available, otherwise original)
+                        image_url = imageinfo[0].get("thumburl") or imageinfo[0].get("url")
+                        if image_url:
+                            url_type = "thumbnail" if imageinfo[0].get("thumburl") else "original"
+                            print(f"         ✅ Retrieved {url_type} URL")
+                            return image_url
+                    else:
+                        print(f"         ⚠️  No imageinfo found for file")
+            
+            return None
+        except Exception as e:
+            print(f"         ❌ Error retrieving file URL: {e}")
+            return None
+    
+    def _get_image_description(self, section_title: str, topic: str, section_content: str = "") -> str:
+        """Generate detailed image description using LLM based on section context."""
+        # Truncate section content to avoid token limits (keep first 1000 words)
+        content_preview = " ".join(section_content.split()[:1000]) if section_content else ""
+        
+        prompt = f"""Generate a detailed, specific image description for a blog post section.
+
+Blog Topic: {topic}
+Section Title: {section_title}
+Section Content Preview: {content_preview[:2000] if content_preview else "No content preview available"}
+
+Requirements:
+1. Create a detailed description (2-4 sentences) of what image would best support this section
+2. Explain what the image should show, including key visual elements
+3. Describe why this image is relevant to the section content
+4. Specify what type of visualization would be most helpful (diagram, chart, flowchart, illustration, etc.)
+5. Include specific details about what should be visible in the image based on the section content
+6. Make it actionable - someone should be able to find or create an appropriate image based on this description
+
+The description should be professional, specific, and contextual to the section content. Focus on what would help readers better understand the concepts discussed in this section.
+
+Generate ONLY the image description text, nothing else."""
+        
+        try:
+            description = self.call_llm(prompt).strip()
+            # Clean up any markdown or formatting that LLM might add
+            description = description.replace("**", "").replace("*", "").replace("#", "").strip()
+            # Ensure it's not empty
+            if not description or len(description) < 20:
+                # Fallback to a basic description
+                return f"Visual illustration or diagram related to {section_title} in the context of {topic}. The image should support and enhance the content of this section by providing visual context that helps readers better understand the concepts discussed."
+            return description
+        except Exception as e:
+            print(f"      ⚠️  Error generating image description with LLM: {e}. Using fallback description.")
+            # Fallback description
+            return f"Visual illustration or diagram related to {section_title} in the context of {topic}. The image should support and enhance the content of this section by providing visual context that helps readers better understand the concepts discussed."
+    
+    def _get_short_alt_text(self, section_title: str, topic: str) -> str:
+        """Generate short alt text for markdown image syntax."""
+        title_lower = section_title.lower()
+        
+        # Short, descriptive alt text
+        if "architecture" in title_lower or "structure" in title_lower:
+            return f"{topic} Architecture Diagram"
+        elif "mistake" in title_lower or "error" in title_lower or "problem" in title_lower:
+            return f"Common {topic} Mistakes"
+        elif "comparison" in title_lower or "versus" in title_lower or "vs" in title_lower:
+            return f"{topic} Comparison Chart"
+        elif "process" in title_lower or "workflow" in title_lower or "flow" in title_lower:
+            return f"{topic} Process Flowchart"
+        elif "configuration" in title_lower or "setup" in title_lower:
+            return f"{topic} Configuration"
+        elif "monitoring" in title_lower or "logging" in title_lower:
+            return f"{topic} Monitoring Dashboard"
+        elif "security" in title_lower:
+            return f"{topic} Security"
+        elif "performance" in title_lower or "optimization" in title_lower:
+            return f"{topic} Performance Metrics"
+        else:
+            return f"{topic} - {section_title}"
+    
+    def _insert_image_in_section(self, content: str, image_markdown: str) -> str:
+        """Insert image at appropriate location in section content."""
+        lines = content.split("\n")
+        
+        # Find the best place to insert image
+        # Strategy: After first substantial paragraph or after first subsection header
+        
+        insert_position = 0
+        
+        # Look for first H3 subsection header
+        for i, line in enumerate(lines):
+            if line.startswith("### "):
+                insert_position = i + 1
+                break
+        
+        # If no H3 found, insert after first substantial paragraph (3+ sentences)
+        if insert_position == 0:
+            paragraph_end = 0
+            sentence_count = 0
+            for i, line in enumerate(lines):
+                if line.strip() and not line.startswith("#"):
+                    # Count sentences (rough estimate)
+                    sentence_count += line.count('.') + line.count('!') + line.count('?')
+                    if sentence_count >= 3:
+                        insert_position = i + 1
+                        break
+        
+        # If still no good position, insert after first non-header line
+        if insert_position == 0:
+            for i, line in enumerate(lines):
+                if line.strip() and not line.startswith("#"):
+                    insert_position = i + 1
+                    break
+        
+        # Insert image
+        lines.insert(insert_position, image_markdown)
+        
+        return "\n".join(lines)
 
 

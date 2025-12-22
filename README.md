@@ -41,6 +41,12 @@ MODEL_NAME=gpt-4o  # Recommended: gpt-4o (latest, fastest, most capable)
 TEMPERATURE=0.7
 ```
 
+**Image Sources:**
+- The system automatically extracts image URLs from research citations when available
+- Uses Wikimedia Commons API for technical diagrams (open license, no API key required)
+- Falls back to descriptive placeholder images if no suitable images are found
+- All image URLs are included in the JSON output for easy access
+
 **Model Options:**
 - `gpt-4o` (Recommended) - Latest model, fastest, most capable, best for quality content
 - `gpt-4-turbo` - High quality, good for complex tasks

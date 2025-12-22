@@ -113,6 +113,8 @@ Focus on:
 3. Connecting paragraphs naturally
 4. Maintaining narrative flow
 
+CRITICAL: Preserve ALL image markdown syntax exactly as written (e.g., ![Alt text](url) and *description*). Do not remove, modify, or move images.
+
 Return the improved article with better flow. Keep all the original content and structure, just improve transitions and connections.
 
 Article:
@@ -133,6 +135,8 @@ Focus on:
 3. Using precise language
 4. Ensuring each paragraph has a clear purpose
 5. Making technical concepts accessible
+
+CRITICAL: Preserve ALL image markdown syntax exactly as written (e.g., ![Alt text](url) and *description*). Do not remove, modify, or move images.
 
 Return the improved article with enhanced clarity. Maintain the same meaning and structure.
 
@@ -171,6 +175,8 @@ Focus on:
 4. Keeping only the best version of repeated concepts
 5. Removing duplicate section headers (keep only the first occurrence)
 
+CRITICAL: Preserve ALL image markdown syntax exactly as written (e.g., ![Alt text](url) and *description*). Do not remove, modify, or move images.
+
 Return the article without repetitions. Maintain all unique information and insights.
 
 Article:
@@ -191,6 +197,8 @@ Article:
 Tone: {tone}
 Style Guide Rules:
 {style_rules}
+
+CRITICAL: Preserve ALL image markdown syntax exactly as written (e.g., ![Alt text](url) and *description*). Do not remove, modify, or move images.
 
 Ensure the article follows all style guide requirements while maintaining its quality and meaning.
 

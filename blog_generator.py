@@ -181,6 +181,18 @@ class BlogGenerator:
         improvements = editor_result.get("improvements", [])
         print(f"✓ Applied {len(improvements)} improvements: {', '.join(improvements)}\n")
         
+        # Check if images were preserved after editing, restore if needed
+        edited_content = editor_result.get("edited_content", {})
+        has_images = any("![" in content or "Image needed:" in content for content in edited_content.values())
+        if not has_images:
+            # Re-add images if they were removed during editing
+            print("📷 Restoring images that may have been removed during editing...")
+            from agents.writer import WriterAgent
+            temp_writer = WriterAgent()
+            citations = research_result.get("citations", [])
+            edited_content = temp_writer._add_images_to_content(edited_content, topic, plan.get("outline", []), citations)
+            editor_result["edited_content"] = edited_content
+        
         # Step 5: SEO Optimization
         print("🔎 Step 5/6: Optimizing for SEO...")
         seo_result = self.seo.process({
@@ -276,6 +288,18 @@ class BlogGenerator:
                 "content": section_content
             })
         
+        # Extract image URLs and descriptions from sections for easy access in JSON
+        import re
+        images = []
+        for section in sections:
+            content = section.get("content", "")
+            # Extract image URLs from markdown image syntax
+            for match in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", content):
+                images.append({"url": match, "type": "url"})
+            # Extract image descriptions from comments (when no URL found)
+            for match in re.findall(r"<!-- Image needed: ([^>]+) -->", content):
+                images.append({"description": match, "type": "description"})
+        
         # Add FAQ if generated
         if seo_data.get("faq_section"):
             sections.append({
@@ -296,6 +320,7 @@ class BlogGenerator:
             "thesis": plan.get("thesis", ""),
             "angle": plan.get("angle", ""),
             "sections": sections,
+            "images": images,
             "seo": {
                 "meta_title": seo_data.get("meta_title", ""),
                 "meta_description": seo_data.get("meta_description", ""),
