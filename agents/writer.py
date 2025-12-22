@@ -16,6 +16,13 @@ class WriterAgent(BaseAgent):
     """Agent responsible for writing blog content."""
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agents.base import _thought_callback
+        
+        topic = input_data.get("topic", "")
+        outline = input_data.get("outline", [])
+        if _thought_callback:
+            section_count = len(outline) if isinstance(outline, list) else 0
+            _thought_callback("Writer", f"Writing content for '{topic}': Creating {section_count} sections with detailed explanations, examples, and actionable insights...")
         """
         Write blog content based on outline and research.
         

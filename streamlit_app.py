@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 from datetime import datetime
 import json
+import yaml
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -86,9 +87,90 @@ class StreamlitHandler:
 st.markdown('<h1 class="main-header">✍️ Enterprise Blog Generator</h1>', unsafe_allow_html=True)
 st.markdown('<p style="text-align: center; color: #666; font-size: 1.1rem;">AI-powered blog creation with agentic workflow</p>', unsafe_allow_html=True)
 
+# Load configuration
+def load_config_values():
+    """Load configuration from config.yaml and environment variables."""
+    config_path = Path("config.yaml")
+    default_config = {
+        "tone": "professional",
+        "reading_level": "college",
+        "target_audience": "enterprise professionals",
+        "min_word_count": 1000,
+        "max_word_count": 1500,
+        "sections_per_article": 5,
+        "target_keywords": [],
+        "include_faq": True,
+        "include_meta_tags": True,
+        "require_citations": True,
+        "add_disclaimers": False,
+        "disclaimer_types": [],
+        "enable_web_search": True,
+        "max_research_sources": 10,
+        "fact_check_enabled": True,
+        "model_name": "gpt-4o",
+        "temperature": 0.7
+    }
+    
+    if config_path.exists():
+        try:
+            with open(config_path, "r") as f:
+                file_config = yaml.safe_load(f) or {}
+                default_config.update(file_config)
+        except Exception as e:
+            st.sidebar.warning(f"Could not load config.yaml: {e}")
+    
+    # Override with environment variables if present
+    if os.getenv("MODEL_NAME"):
+        default_config["model_name"] = os.getenv("MODEL_NAME")
+    if os.getenv("TEMPERATURE"):
+        default_config["temperature"] = float(os.getenv("TEMPERATURE"))
+    
+    return default_config
+
 # Sidebar for configuration
 with st.sidebar:
     st.header("⚙️ Configuration")
+    
+    # Load and display configuration values
+    config = load_config_values()
+    
+    # Configuration display with expanders
+    with st.expander("📝 Content Settings", expanded=True):
+        st.markdown(f"**Tone:** `{config.get('tone', 'professional')}`")
+        st.markdown(f"**Reading Level:** `{config.get('reading_level', 'college')}`")
+        st.markdown(f"**Target Audience:** `{config.get('target_audience', 'enterprise professionals')}`")
+        st.markdown(f"**Min Word Count:** `{config.get('min_word_count', 1000)}`")
+        st.markdown(f"**Max Word Count:** `{config.get('max_word_count', 1500)}`")
+        st.markdown(f"**Sections per Article:** `{config.get('sections_per_article', 5)}`")
+    
+    with st.expander("🔍 SEO Settings", expanded=False):
+        st.markdown(f"**Include FAQ:** `{config.get('include_faq', True)}`")
+        st.markdown(f"**Include Meta Tags:** `{config.get('include_meta_tags', True)}`")
+        keywords = config.get('target_keywords', [])
+        if keywords:
+            st.markdown(f"**Target Keywords:** `{', '.join(keywords)}`")
+        else:
+            st.markdown(f"**Target Keywords:** `[]` (none)")
+    
+    with st.expander("🤖 Model Settings", expanded=False):
+        st.markdown(f"**Model Name:** `{config.get('model_name', 'gpt-4o')}`")
+        st.markdown(f"**Temperature:** `{config.get('temperature', 0.7)}`")
+    
+    with st.expander("🔒 Safety & Compliance", expanded=False):
+        st.markdown(f"**Require Citations:** `{config.get('require_citations', True)}`")
+        st.markdown(f"**Add Disclaimers:** `{config.get('add_disclaimers', False)}`")
+        disclaimer_types = config.get('disclaimer_types', [])
+        if disclaimer_types:
+            st.markdown(f"**Disclaimer Types:** `{', '.join(disclaimer_types)}`")
+        else:
+            st.markdown(f"**Disclaimer Types:** `[]` (none)")
+    
+    with st.expander("🔬 Agent Settings", expanded=False):
+        st.markdown(f"**Enable Web Search:** `{config.get('enable_web_search', True)}`")
+        st.markdown(f"**Max Research Sources:** `{config.get('max_research_sources', 10)}`")
+        st.markdown(f"**Fact Check Enabled:** `{config.get('fact_check_enabled', True)}`")
+    
+    st.divider()
     
     # Topic input
     topic = st.text_input(
@@ -151,11 +233,13 @@ if generate_button and topic:
     # Create a placeholder for step-by-step updates
     step_placeholders = {}
     step_messages = {}  # Store messages for each step
+    step_thoughts = {}  # Store AI thoughts for each step
     
     with steps_display.container():
         for i, (step_name, icon, step_label) in enumerate(steps):
             step_placeholders[i] = st.empty()
             step_messages[i] = []
+            step_thoughts[i] = []
             # Initialize all steps as pending
             step_placeholders[i].markdown(f"""
                 <div class="step-box">
@@ -173,6 +257,56 @@ if generate_button and topic:
         # Track current step - use a list to allow modification in nested function
         step_state = {"current": -1, "completed": set()}
         
+        # Map agent names to step indices
+        agent_to_step = {
+            "Planner": 0,
+            "Research": 1,
+            "Writer": 2,
+            "Editor": 3,
+            "SEO": 4,
+            "FactCheck": 5
+        }
+        
+        # Set up thought callback
+        from agents.base import set_thought_callback
+        def capture_thought(agent_name: str, thought: str):
+            """Capture AI thoughts and associate with the current step."""
+            step_idx = agent_to_step.get(agent_name, -1)
+            if step_idx >= 0 and step_idx < len(steps):
+                if step_idx not in step_thoughts:
+                    step_thoughts[step_idx] = []
+                step_thoughts[step_idx].append(thought)
+                # Update the step display with thoughts
+                _update_step_with_thoughts(step_idx)
+        
+        set_thought_callback(capture_thought)
+        
+        def _update_step_with_thoughts(step_idx: int):
+            """Update step display to include AI thoughts."""
+            import html
+            step_name, icon, step_label = steps[step_idx]
+            thoughts_html = ""
+            if step_idx in step_thoughts and step_thoughts[step_idx]:
+                latest_thought = step_thoughts[step_idx][-1]
+                # Escape HTML in the thought text to prevent injection
+                escaped_thought = html.escape(str(latest_thought))
+                thoughts_html = f'<div class="ai-thinking"><div class="ai-thinking-label">🤔 AI Thinking:</div><div class="ai-thinking-text">{escaped_thought}</div></div>'
+            
+            if step_idx in step_state["completed"]:
+                status_html = '<div style="margin-top: 0.5rem; color: #28a745; font-size: 0.9rem;">✓ Complete</div>'
+            elif step_idx == step_state["current"]:
+                status_html = '<div style="margin-top: 0.5rem; color: #856404; font-size: 0.9rem;">⏳ In progress...</div>'
+            else:
+                status_html = '<div style="margin-top: 0.5rem; color: #999; font-size: 0.9rem;">⏸️ Pending</div>'
+            
+            step_placeholders[step_idx].markdown(f"""
+                <div class="step-box" style="{'border-left-color: #28a745; background-color: #d4edda;' if step_idx in step_state['completed'] else ('border-left-color: #ffc107; background-color: #fff3cd;' if step_idx == step_state['current'] else '')}">
+                    <strong>{icon} {step_label}:</strong> {step_name}
+                    {status_html}
+                    {thoughts_html}
+                </div>
+            """, unsafe_allow_html=True)
+        
         # Create a custom stream to capture print statements
         class StreamlitStream:
             def __init__(self, step_state_ref, step_placeholders_ref, steps_ref, progress_bar_ref, status_text_ref):
@@ -184,12 +318,29 @@ if generate_button and topic:
                 self.status_text = status_text_ref
             
             def write(self, text):
-                if text.strip():
-                    self.buffer.append(text.strip())
+                try:
+                    # Convert bytes to string if needed
+                    if isinstance(text, bytes):
+                        text = text.decode('utf-8', errors='ignore')
+                    
+                    # Convert to string if not already
+                    text = str(text) if text else ""
+                    
+                    # Skip if empty after conversion
+                    if not text or not text.strip():
+                        return
+                    
+                    text = text.strip()
+                    self.buffer.append(text)
                     # Parse step number from print statements
                     
-                    # Check for step indicators
-                    step_match = re.search(r'Step (\d+)/6', text)
+                    # Check for step indicators - ensure text is string
+                    if not isinstance(text, str):
+                        return
+                    try:
+                        step_match = re.search(r'Step (\d+)/6', text)
+                    except (TypeError, AttributeError):
+                        return
                     if step_match:
                         step_num = int(step_match.group(1)) - 1  # Convert to 0-based index
                         if step_num < len(self.steps):
@@ -211,16 +362,29 @@ if generate_button and topic:
                         if self.step_state["current"] >= 0:
                             self.step_state["completed"].add(self.step_state["current"])
                             self._update_steps()
+                except Exception:
+                    # Silently ignore errors during shutdown or invalid input
+                    pass
             
             def _update_steps(self):
                 """Update all step displays based on current state"""
+                import html
                 for i, (step_name, icon, step_label) in enumerate(self.steps):
+                    # Get thoughts for this step
+                    thoughts_html = ""
+                    if i in step_thoughts and step_thoughts[i]:
+                        latest_thought = step_thoughts[i][-1]
+                        # Escape HTML in the thought text to prevent injection
+                        escaped_thought = html.escape(str(latest_thought))
+                        thoughts_html = f'<div class="ai-thinking"><div class="ai-thinking-label">🤔 AI Thinking:</div><div class="ai-thinking-text">{escaped_thought}</div></div>'
+                    
                     if i in self.step_state["completed"]:
                         # Step is complete
                         self.step_placeholders[i].markdown(f"""
                             <div class="step-box step-complete">
                                 <strong>{icon} {step_label}:</strong> {step_name}
                                 <div style="margin-top: 0.5rem; color: #28a745; font-size: 0.9rem;">✓ Complete</div>
+                                {thoughts_html}
                             </div>
                         """, unsafe_allow_html=True)
                     elif i == self.step_state["current"]:
@@ -229,6 +393,7 @@ if generate_button and topic:
                             <div class="step-box" style="border-left-color: #ffc107; background-color: #fff3cd;">
                                 <strong>{icon} {step_label}:</strong> {step_name}
                                 <div style="margin-top: 0.5rem; color: #856404; font-size: 0.9rem;">⏳ In progress...</div>
+                                {thoughts_html}
                             </div>
                         """, unsafe_allow_html=True)
                     else:
@@ -242,6 +407,10 @@ if generate_button and topic:
             
             def flush(self):
                 pass
+        
+        # Set up thought callback before generation
+        from agents.base import set_thought_callback
+        set_thought_callback(capture_thought)
         
         # Redirect stdout to capture print statements
         old_stdout = sys.stdout
@@ -271,6 +440,8 @@ if generate_button and topic:
             
         finally:
             sys.stdout = old_stdout
+            # Clear thought callback after generation
+            set_thought_callback(None)
         
         # Update final progress
         progress_bar.progress(1.0)

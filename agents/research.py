@@ -35,6 +35,11 @@ class ResearchAgent(BaseAgent):
                 pass
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agents.base import _thought_callback
+        
+        topic = input_data.get("topic", "")
+        if _thought_callback:
+            _thought_callback("Research", f"Gathering research for '{topic}': Searching web sources, analyzing citations, and matching facts to references...")
         """
         Conduct research based on search queries and required facts.
         

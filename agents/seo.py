@@ -8,6 +8,11 @@ class SEOAgent(BaseAgent):
     """Agent responsible for SEO optimization."""
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agents.base import _thought_callback
+        
+        topic = input_data.get("topic", "")
+        if _thought_callback:
+            _thought_callback("SEO", f"Optimizing SEO for '{topic}': Generating meta tags, creating FAQs, and improving keyword placement...")
         """
         Optimize content for SEO.
         
@@ -229,10 +234,24 @@ Requirements:
 - Include target keywords naturally
 - Format as markdown with ## FAQ section and Q/A pairs using ### for questions
 - Focus on {topic} - avoid generic FAQ answers
+- Return ONLY the markdown content, do NOT wrap it in code blocks (no ```markdown or ```)
 
-Return the FAQ section in markdown format with exactly 5 Q/A pairs."""
+Return the FAQ section in markdown format with exactly 5 Q/A pairs. Do not use code blocks."""
         
-        return self.call_llm(prompt)
+        response = self.call_llm(prompt)
+        
+        # Remove markdown code blocks if present
+        if "```markdown" in response:
+            response = response.split("```markdown")[1].split("```")[0].strip()
+        elif "```" in response:
+            # Check if it's wrapped in any code block
+            parts = response.split("```")
+            if len(parts) >= 3:
+                # Likely wrapped in code block, extract content
+                response = parts[1].split("\n", 1)[1] if "\n" in parts[1] else parts[1]
+                response = response.rsplit("```", 1)[0].strip()
+        
+        return response
     
     def _suggest_internal_links(self, content: Dict[str, str], topic: str) -> List[Dict[str, str]]:
         """Suggest internal linking opportunities."""

@@ -7,6 +7,12 @@ class EditorAgent(BaseAgent):
     """Agent responsible for editing and improving blog content."""
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        from agents.base import _thought_callback
+        
+        content = input_data.get("content", {})
+        if _thought_callback:
+            section_count = len(content) if isinstance(content, dict) else 0
+            _thought_callback("Editor", f"Editing and refining content: Improving flow, removing repetitions, ensuring clarity across {section_count} sections...")
         """
         Edit and improve blog content.
         

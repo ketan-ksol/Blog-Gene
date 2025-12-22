@@ -1,11 +1,23 @@
 """Base agent class for all blog generation agents."""
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 from langchain_openai import ChatOpenAI
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Global callback for capturing AI thoughts
+_thought_callback: Optional[Callable[[str, str], None]] = None
+
+def set_thought_callback(callback: Optional[Callable[[str, str], None]]):
+    """Set a global callback function to capture AI thoughts.
+    
+    Args:
+        callback: Function that takes (agent_name, thought) as parameters
+    """
+    global _thought_callback
+    _thought_callback = callback
 
 
 class BaseAgent(ABC):
@@ -16,6 +28,7 @@ class BaseAgent(ABC):
         self.model_name = model_name or os.getenv("MODEL_NAME", "gpt-4o")
         self.temperature = temperature or float(os.getenv("TEMPERATURE", "0.7"))
         api_key = os.getenv("OPENAI_API_KEY")
+        self.agent_name = self.__class__.__name__.replace("Agent", "")
         
         if not api_key:
             raise ValueError(
@@ -72,10 +85,25 @@ class BaseAgent(ABC):
         # Can be implemented with langchain_core.prompts if needed
         return template
     
-    def call_llm(self, prompt: str, system_message: Optional[str] = None) -> str:
-        """Call the LLM with a prompt."""
+    def call_llm(self, prompt: str, system_message: Optional[str] = None, capture_thoughts: bool = True) -> str:
+        """Call the LLM with a prompt.
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            system_message: Optional system message
+            capture_thoughts: If True, capture AI reasoning/thoughts
+        """
         from langchain_core.messages import HumanMessage, SystemMessage
         import time
+        
+        # If capturing thoughts, notify that we're starting
+        if capture_thoughts and _thought_callback:
+            # Extract a brief summary of what we're doing from the prompt
+            task_summary = prompt[:150].replace('\n', ' ').strip()
+            if len(task_summary) < len(prompt):
+                task_summary += "..."
+            thought_text = f"Analyzing task: {task_summary}"
+            _thought_callback(self.agent_name, thought_text)
         
         messages = []
         if system_message:

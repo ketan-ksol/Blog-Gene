@@ -83,7 +83,12 @@ Return your response as a JSON object with this exact structure:
 """
         
         try:
-            response = self.call_llm(prompt)
+            # Provide context about what we're planning
+            from agents.base import _thought_callback
+            if _thought_callback:
+                _thought_callback("Planner", f"Creating blog plan for '{topic}': Analyzing audience needs, structuring content outline, and identifying research requirements...")
+            
+            response = self.call_llm(prompt, capture_thoughts=False)
         except Exception as e:
             return {
                 "status": "error",
