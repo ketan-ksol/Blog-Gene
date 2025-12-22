@@ -113,9 +113,9 @@ class WriterAgent(BaseAgent):
         content["Conclusion"] = conclusion
         total_word_count += len(conclusion.split())
         
-        # Add images to relevant sections (at least 1 per document)
-        citations = input_data.get("citations", [])
-        content = self._add_images_to_content(content, topic, outline, citations)
+        # Add image descriptions to relevant sections (at least 1 per document)
+        # Note: Image search is disabled - only descriptions are added
+        content = self._add_images_to_content(content, topic, outline)
         
         # Check if we need to adjust content to meet word count requirements
         if total_word_count < min_word_count:
@@ -349,10 +349,9 @@ Write the expanded content, maintaining ALL existing content and adding substant
         return self.call_llm(prompt)
     
     def _add_images_to_content(self, content: Dict[str, str], topic: str, outline: List[Dict], citations: List[Dict] = None) -> Dict[str, str]:
-        """Add images to relevant sections from citations, Wikimedia Commons, or placeholders. Ensure at least 1 image per document."""
+        """Add 2-line image descriptions to relevant sections. Ensure at least 1 image description per document."""
         enhanced_content = content.copy()
         images_added = 0
-        citations = citations or []
         
         # Determine which sections would benefit from images
         image_candidates = []
@@ -375,24 +374,24 @@ Write the expanded content, maintaining ALL existing content and adding substant
                     image_candidates.append(section_title)
                     break
         
-        # Add images to candidate sections (max 3 to keep focused)
+        # Add image descriptions to candidate sections (max 3 to keep focused)
         for section_title in image_candidates[:3]:
             if section_title in enhanced_content:
                 section_content = enhanced_content[section_title]
-                image_markdown = self._generate_image_url(section_title, topic, citations, section_content)
+                image_markdown = self._generate_image_url(section_title, topic, None, section_content)
                 enhanced_content[section_title] = self._insert_image_in_section(
                     enhanced_content[section_title],
                     image_markdown
                 )
                 images_added += 1
         
-        # Ensure at least 1 image if none were added
+        # Ensure at least 1 image description if none were added
         if images_added == 0 and content:
             # Add to first substantial section
             for section_title in content.keys():
                 if section_title not in ["Introduction", "Conclusion"]:
                     section_content = content[section_title]
-                    image_markdown = self._generate_image_url(section_title, topic, citations, section_content)
+                    image_markdown = self._generate_image_url(section_title, topic, None, section_content)
                     enhanced_content[section_title] = self._insert_image_in_section(
                         enhanced_content[section_title],
                         image_markdown
@@ -444,41 +443,15 @@ Write the expanded content, maintaining ALL existing content and adding substant
         return False
     
     def _generate_image_url(self, section_title: str, topic: str, citations: List[Dict] = None, section_content: str = "") -> str:
-        """Generate an image URL from citations or Wikimedia Commons, or return description only."""
+        """Generate a 2-line image description where images are needed."""
         # Generate appropriate image description using LLM based on section context
         image_description = self._get_image_description(section_title, topic, section_content)
-        citations = citations or []
         
-        print(f"🔍 [IMAGE SEARCH] Section: '{section_title}' | Description: '{image_description}'")
-        print(f"   📚 Searching {len(citations)} citation(s) for images...")
+        # Create a concise 2-line description from the detailed one
+        short_description = self._create_short_image_description(section_title, topic, image_description)
         
-        # Strategy 1: Try to extract image from citations
-        image_url = self._extract_image_from_citations(section_title, topic, citations, section_content, image_description)
-        
-        # Strategy 2: Try Wikimedia Commons for technical diagrams
-        if not image_url:
-            print(f"   🌐 No images found in citations. Searching Wikimedia Commons...")
-            image_url = self._fetch_wikimedia_image(image_description, topic)
-        else:
-            print(f"   ✅ Using image from citations")
-        
-        # Format markdown with appropriate attribution
-        # Use shorter alt text for markdown, but keep full description in caption
-        alt_text = self._get_short_alt_text(section_title, topic)
-        
-        if image_url:
-            if image_url.startswith("https://upload.wikimedia.org"):
-                print(f"   ✅ FINAL: Using Wikimedia Commons image")
-                return f"\n![{alt_text}]({image_url})\n\n*{image_description}*\n\n<!-- Image from Wikimedia Commons (CC license) -->\n"
-            else:
-                print(f"   ✅ FINAL: Using citation image")
-                return f"\n![{alt_text}]({image_url})\n\n*{image_description}*\n\n<!-- Image from reference sources -->\n"
-        else:
-            # No image found - return 2-line description only
-            print(f"   ⚠️  FINAL: No image found. Using 2-line description only")
-            # Create a concise 2-line description from the detailed one
-            short_description = self._create_short_image_description(section_title, topic, image_description)
-            return f"\n<!-- Image needed: {short_description} -->\n\n*[Image suggestion: {short_description}]*\n"
+        # Return 2-line description only (no image URLs)
+        return f"\n<!-- Image needed: {short_description} -->\n\n*[Image suggestion: {short_description}]*\n"
     
     def _extract_image_from_citations(self, section_title: str, topic: str, citations: List[Dict], section_content: str = "", image_description: str = "") -> Optional[str]:
         """Extract image URLs by fetching and parsing web pages from citations. Checks all citations and returns the best image."""

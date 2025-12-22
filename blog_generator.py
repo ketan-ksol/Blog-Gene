@@ -185,12 +185,11 @@ class BlogGenerator:
         edited_content = editor_result.get("edited_content", {})
         has_images = any("![" in content or "Image needed:" in content for content in edited_content.values())
         if not has_images:
-            # Re-add images if they were removed during editing
-            print("📷 Restoring images that may have been removed during editing...")
+            # Re-add image descriptions if they were removed during editing
+            print("📷 Restoring image descriptions that may have been removed during editing...")
             from agents.writer import WriterAgent
             temp_writer = WriterAgent()
-            citations = research_result.get("citations", [])
-            edited_content = temp_writer._add_images_to_content(edited_content, topic, plan.get("outline", []), citations)
+            edited_content = temp_writer._add_images_to_content(edited_content, topic, plan.get("outline", []))
             editor_result["edited_content"] = edited_content
         
         # Step 5: SEO Optimization
