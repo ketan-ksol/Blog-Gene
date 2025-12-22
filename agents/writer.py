@@ -453,7 +453,7 @@ Write the expanded content, maintaining ALL existing content and adding substant
         print(f"   📚 Searching {len(citations)} citation(s) for images...")
         
         # Strategy 1: Try to extract image from citations
-        image_url = self._extract_image_from_citations(section_title, topic, citations)
+        image_url = self._extract_image_from_citations(section_title, topic, citations, section_content, image_description)
         
         # Strategy 2: Try Wikimedia Commons for technical diagrams
         if not image_url:
@@ -474,18 +474,17 @@ Write the expanded content, maintaining ALL existing content and adding substant
                 print(f"   ✅ FINAL: Using citation image")
                 return f"\n![{alt_text}]({image_url})\n\n*{image_description}*\n\n<!-- Image from reference sources -->\n"
         else:
-            # No image found - return description only without any URL
-            print(f"   ⚠️  FINAL: No image found. Using description only")
-            return f"\n<!-- Image needed: {image_description} -->\n\n*[Image suggestion: {image_description}]*\n"
+            # No image found - return 2-line description only
+            print(f"   ⚠️  FINAL: No image found. Using 2-line description only")
+            # Create a concise 2-line description from the detailed one
+            short_description = self._create_short_image_description(section_title, topic, image_description)
+            return f"\n<!-- Image needed: {short_description} -->\n\n*[Image suggestion: {short_description}]*\n"
     
-    def _extract_image_from_citations(self, section_title: str, topic: str, citations: List[Dict]) -> Optional[str]:
-        """Extract image URLs by fetching and parsing web pages from citations."""
-        import re
+    def _extract_image_from_citations(self, section_title: str, topic: str, citations: List[Dict], section_content: str = "", image_description: str = "") -> Optional[str]:
+        """Extract image URLs by fetching and parsing web pages from citations. Checks all citations and returns the best image."""
+        all_candidate_images = []
         
-        found_images = []
-        ignored_images = []
-        
-        # Search through citations - fetch actual web pages
+        # Search through ALL citations - fetch actual web pages
         for i, citation in enumerate(citations[:5], 1):  # Limit to first 5 to avoid too many requests
             url = citation.get("url", "")
             title = citation.get("title", "Unknown")
@@ -497,27 +496,42 @@ Write the expanded content, maintaining ALL existing content and adding substant
             print(f"         URL: {url[:80]}...")
             print(f"         🔍 Fetching webpage to extract images...")
             
-            # Fetch the web page
-            image_url = self._fetch_images_from_webpage(url, section_title, topic)
+            # Fetch all candidate images from this webpage
+            candidates = self._fetch_images_from_webpage(url, section_title, topic, section_content, image_description)
             
-            if image_url:
-                print(f"         ✅ FOUND: {image_url[:70]}...")
-                return image_url
+            if candidates:
+                print(f"         ✅ Found {len(candidates)} candidate image(s) on this page")
+                all_candidate_images.extend(candidates)
             else:
                 print(f"         ℹ️  No suitable images found on this page")
         
-        if not found_images and not ignored_images:
+        if not all_candidate_images:
             print(f"      ℹ️  No image URLs found in any citations")
-        elif found_images:
-            print(f"      📊 Summary: Found {len(found_images)} image(s), ignored {len(ignored_images)} icon(s)")
+            return None
         
-        return None
+        # Sort all candidates from all citations by relevance score
+        all_candidate_images.sort(key=lambda x: x['relevance'], reverse=True)
+        
+        # Filter by minimum relevance threshold (only consider images with score >= 5.0)
+        relevant_images = [img for img in all_candidate_images if img['relevance'] >= 5.0]
+        
+        if not relevant_images:
+            best_score = all_candidate_images[0]['relevance'] if all_candidate_images else 0
+            print(f"      ⚠️  No images met minimum relevance threshold (5.0) across all citations. Best score: {best_score:.2f}")
+            return None
+        
+        # Return the best image across all citations
+        best_image = relevant_images[0]
+        print(f"      ✅ Selected best image across all citations (relevance: {best_image['relevance']:.2f}): {best_image['alt'][:50] if best_image['alt'] else 'No alt text'}")
+        print(f"         Source: {best_image.get('source', 'Unknown')[:60]}...")
+        
+        return best_image['url']
     
-    def _fetch_images_from_webpage(self, url: str, section_title: str, topic: str) -> Optional[str]:
-        """Fetch a webpage and extract relevant image URLs."""
+    def _fetch_images_from_webpage(self, url: str, section_title: str, topic: str, section_content: str = "", image_description: str = "") -> List[Dict]:
+        """Fetch a webpage and extract relevant image URLs. Returns list of candidate images with relevance scores."""
         if not BS4_AVAILABLE:
             print(f"         ⚠️  BeautifulSoup4 not available. Install with: pip install beautifulsoup4 lxml")
-            return None
+            return []
         
         try:
             # Handle SSL verification
@@ -537,7 +551,7 @@ Write the expanded content, maintaining ALL existing content and adding substant
             
             if response.status_code != 200:
                 print(f"         ⚠️  HTTP {response.status_code} - Could not fetch page")
-                return None
+                return []
             
             # Parse HTML
             soup = BeautifulSoup(response.content, 'lxml')
@@ -546,7 +560,7 @@ Write the expanded content, maintaining ALL existing content and adding substant
             images = soup.find_all('img')
             
             if not images:
-                return None
+                return []
             
             print(f"         📷 Found {len(images)} image(s) on page, analyzing...")
             
@@ -584,38 +598,103 @@ Write the expanded content, maintaining ALL existing content and adding substant
                     except (ValueError, TypeError):
                         pass
                 
-                # Check if image is relevant to section/topic
-                relevance_score = self._calculate_image_relevance(img_url, img_alt, section_title, topic)
+                # Quick keyword-based relevance check first
+                quick_score = self._calculate_image_relevance_keywords(img_url, img_alt, section_title, topic)
                 
                 candidate_images.append({
                     'url': img_url,
                     'alt': img_alt,
-                    'relevance': relevance_score,
+                    'quick_score': quick_score,
                     'width': img_width,
                     'height': img_height
                 })
             
             if not candidate_images:
-                return None
+                return []
             
-            # Sort by relevance score
-            candidate_images.sort(key=lambda x: x['relevance'], reverse=True)
+            # Sort by quick keyword score and take top 5 candidates for LLM evaluation
+            candidate_images.sort(key=lambda x: x['quick_score'], reverse=True)
+            top_candidates = candidate_images[:5]
             
-            # Return the most relevant image
-            best_image = candidate_images[0]
-            print(f"         ✅ Selected image (relevance: {best_image['relevance']:.2f}): {best_image['alt'][:50] if best_image['alt'] else 'No alt text'}")
+            print(f"         🤖 Evaluating top {len(top_candidates)} candidate(s) with LLM for relevance...")
             
-            return best_image['url']
+            # Use LLM to evaluate top candidates
+            for candidate in top_candidates:
+                candidate['relevance'] = self._calculate_image_relevance_llm(
+                    candidate['url'], candidate['alt'], section_title, topic, 
+                    section_content, image_description
+                )
+            
+            # Sort by LLM relevance score
+            top_candidates.sort(key=lambda x: x['relevance'], reverse=True)
+            
+            # Add source information to each candidate
+            for candidate in top_candidates:
+                candidate['source'] = url
+            
+            # Return all candidates (not just the best one) - let caller decide
+            return top_candidates
             
         except requests.exceptions.RequestException as e:
             print(f"         ⚠️  Network error fetching page: {str(e)[:100]}")
-            return None
+            return []
         except Exception as e:
             print(f"         ⚠️  Error parsing webpage: {str(e)[:100]}")
-            return None
+            return []
     
-    def _calculate_image_relevance(self, img_url: str, img_alt: str, section_title: str, topic: str) -> float:
-        """Calculate relevance score for an image based on URL, alt text, section, and topic."""
+    def _calculate_image_relevance_llm(self, img_url: str, img_alt: str, section_title: str, topic: str, 
+                                      section_content: str = "", image_description: str = "") -> float:
+        """Calculate relevance score using LLM to evaluate semantic relevance."""
+        # First do quick keyword-based filtering
+        url_lower = img_url.lower()
+        alt_lower = (img_alt or "").lower()
+        
+        # Quick rejections for obviously irrelevant images
+        non_content_keywords = ['ad', 'advertisement', 'banner', 'promo', 'social-share', 'share-button', 
+                               'cookie', 'privacy', 'newsletter', 'subscribe']
+        if any(keyword in url_lower or keyword in alt_lower for keyword in non_content_keywords):
+            return 0.0
+        
+        # Use LLM to evaluate relevance
+        try:
+            # Truncate content for prompt
+            content_preview = " ".join(section_content.split()[:500]) if section_content else ""
+            desc_preview = image_description[:500] if image_description else ""
+            
+            prompt = f"""Evaluate how relevant an image is to a blog section. Rate from 0-10 where:
+- 0-3: Not relevant (generic, unrelated, or decorative)
+- 4-6: Somewhat relevant (related topic but not specific to section)
+- 7-8: Relevant (matches section topic and content well)
+- 9-10: Highly relevant (perfectly matches section content and image description)
+
+Blog Topic: {topic}
+Section Title: {section_title}
+Section Content Preview: {content_preview}
+Desired Image Description: {desc_preview}
+
+Image URL: {img_url[:200]}
+Image Alt Text: {img_alt[:200] if img_alt else "No alt text"}
+
+Respond with ONLY a number from 0-10, nothing else."""
+            
+            response = self.call_llm(prompt).strip()
+            
+            # Extract number from response
+            import re
+            match = re.search(r'\b([0-9]|10)\b', response)
+            if match:
+                score = float(match.group(1))
+                return score
+            else:
+                # Fallback to keyword-based scoring
+                return self._calculate_image_relevance_keywords(img_url, img_alt, section_title, topic)
+                
+        except Exception as e:
+            print(f"         ⚠️  LLM relevance check failed: {str(e)[:50]}. Using keyword-based scoring.")
+            return self._calculate_image_relevance_keywords(img_url, img_alt, section_title, topic)
+    
+    def _calculate_image_relevance_keywords(self, img_url: str, img_alt: str, section_title: str, topic: str) -> float:
+        """Fallback keyword-based relevance calculation."""
         score = 0.0
         
         # Extract keywords from section title and topic
@@ -632,23 +711,47 @@ Write the expanded content, maintaining ALL existing content and adding substant
         # Check alt text for relevant keywords
         if img_alt:
             for keyword in all_keywords:
-                if len(keyword) > 3 and keyword in img_alt:
+                if len(keyword) > 3 and keyword in img_alt.lower():
                     score += 3.0
         
         # Boost score for common image types that are usually relevant
         image_type_keywords = ['diagram', 'chart', 'graph', 'illustration', 'infographic', 'visualization', 
                               'architecture', 'flow', 'process', 'workflow', 'comparison', 'analysis']
         for keyword in image_type_keywords:
-            if keyword in url_lower or (img_alt and keyword in img_alt):
+            if keyword in url_lower or (img_alt and keyword in img_alt.lower()):
                 score += 1.5
         
-        # Penalize common non-content images
-        non_content_keywords = ['ad', 'advertisement', 'banner', 'promo', 'social-share', 'share-button']
-        for keyword in non_content_keywords:
-            if keyword in url_lower or (img_alt and keyword in img_alt):
-                score -= 5.0
+        # Normalize to 0-10 scale (rough approximation)
+        return min(10.0, score)
+    
+    def _create_short_image_description(self, section_title: str, topic: str, full_description: str = "") -> str:
+        """Create a concise 2-line image description from the full description."""
+        # Extract key information: what type of image and what it should show
+        if not full_description:
+            return f"Visual illustration or diagram related to {section_title} in the context of {topic}"
         
-        return max(0.0, score)
+        # Try to extract the first 2 sentences or create a summary
+        sentences = full_description.split('. ')
+        if len(sentences) >= 2:
+            # Take first 2 sentences
+            short_desc = '. '.join(sentences[:2])
+            if not short_desc.endswith('.'):
+                short_desc += '.'
+            return short_desc
+        elif len(sentences) == 1:
+            # If only one sentence, try to split it or use first part
+            words = full_description.split()
+            if len(words) > 30:
+                # Take first 30 words
+                short_desc = ' '.join(words[:30])
+                if not short_desc.endswith('.'):
+                    short_desc += '...'
+                return short_desc
+            else:
+                return full_description
+        else:
+            # Fallback
+            return f"Visual illustration or diagram related to {section_title} in the context of {topic}"
     
     def _fetch_wikimedia_image(self, image_description: str, topic: str) -> Optional[str]:
         """Fetch a technical diagram from Wikimedia Commons API."""
