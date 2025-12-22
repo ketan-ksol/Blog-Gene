@@ -100,7 +100,7 @@ Edit `config.yaml` to customize default settings:
 
 ```yaml
 tone: "professional"
-reading_level: "executive"
+reading_level: "college"
 target_audience: "enterprise professionals"
 min_word_count: 1500
 max_word_count: 3000
