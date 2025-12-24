@@ -8,11 +8,6 @@ class SEOAgent(BaseAgent):
     """Agent responsible for SEO optimization."""
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        from agents.base import _thought_callback
-        
-        topic = input_data.get("topic", "")
-        if _thought_callback:
-            _thought_callback("SEO", f"Optimizing SEO for '{topic}': Generating meta tags, creating FAQs, and improving keyword placement...")
         """
         Optimize content for SEO.
         
@@ -31,6 +26,17 @@ class SEOAgent(BaseAgent):
             - internal_link_suggestions: list
             - keyword_density: dict
         """
+        from agents.base import _thought_callback
+        import time
+        
+        topic = input_data.get("topic", "")
+        if _thought_callback:
+            _thought_callback("SEO", f"Starting SEO optimization: Analyzing keyword density and search intent...")
+            time.sleep(0.3)
+            _thought_callback("SEO", f"Generating compelling meta title and description for maximum click-through rate...")
+            time.sleep(0.3)
+            _thought_callback("SEO", f"Creating 5 targeted FAQ questions to improve search visibility and user engagement...")
+        
         content = input_data.get("content", {})
         topic = input_data.get("topic", "")
         target_keywords = input_data.get("target_keywords", [])
@@ -51,19 +57,30 @@ class SEOAgent(BaseAgent):
         meta_title = ""
         meta_description = ""
         if include_meta_tags:
+            if _thought_callback:
+                _thought_callback("SEO", "Crafting compelling meta title and description for search engines...")
             meta_title = self._generate_meta_title(topic, target_keywords)
             meta_description = self._generate_meta_description(topic, content, target_keywords)
+            if _thought_callback:
+                time.sleep(0.2)
         
         # Generate FAQ section
         faq_section = ""
         if include_faq:
+            if _thought_callback:
+                _thought_callback("SEO", "Generating 5 targeted FAQ questions to improve search visibility...")
             faq_section = self._generate_faq(topic, content, target_keywords)
+            if _thought_callback:
+                time.sleep(0.2)
         
         # Suggest internal links
         internal_link_suggestions = self._suggest_internal_links(content, topic)
         
         # Calculate keyword density
         keyword_density = self._calculate_keyword_density(optimized_content, target_keywords)
+        
+        if _thought_callback:
+            _thought_callback("SEO", "SEO optimization complete! Generated meta tags and 5 FAQ questions.")
         
         return {
             "status": "success",

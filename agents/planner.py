@@ -29,21 +29,33 @@ class PlannerAgent(BaseAgent):
         target_audience = input_data.get("target_audience", "enterprise professionals")
         tone = input_data.get("tone", "professional")
         word_count = input_data.get("word_count", 2000)
+        sections_per_article = input_data.get("sections_per_article", 5)
+        
+        # Calculate section range based on sections_per_article
+        min_sections = max(3, sections_per_article - 1)
+        max_sections = sections_per_article + 2
         
         prompt = f"""You are an expert content strategist creating a comprehensive blog plan for an enterprise audience.
 
+MARKETING CONTEXT:
+- This blog is written by Ksolves, a company specializing in enterprise solutions, implementation, migration, and consulting
+- The blog should be informative yet marketing-oriented - helping readers understand solutions while positioning Ksolves as a partner
+- Focus on challenges businesses face and how solutions can help
+- Include sections that naturally lead to positioning Ksolves as a solution provider
+
 Topic: {topic}
 Target Audience: {target_audience}
-Tone: {tone}
+Tone: {tone} (with marketing focus - informative yet solution-oriented)
 Target Word Count: {word_count}
+Target Number of Sections: {sections_per_article}
 
-IMPORTANT: Focus specifically on {topic}. Create a plan that addresses {topic} directly, not general information about the broader subject area.
+IMPORTANT: Focus specifically on {topic}. Create a plan that addresses {topic} directly, not general information about the broader subject area. Include marketing angles that position challenges as opportunities for improvement and solutions.
 
 Create a detailed blog plan with the following structure:
 
 1. **Angle**: A unique perspective or approach to the topic that will engage the audience
 2. **Thesis**: The main argument or key message of the blog post
-3. **Outline**: A structured outline with 5-7 sections, each with:
+3. **Outline**: A structured outline with {min_sections}-{max_sections} sections (target: {sections_per_article} sections), each with:
    - Section title (H2)
    - Subsection titles (H3) if needed
    - Brief description of what should be covered
@@ -86,7 +98,12 @@ Return your response as a JSON object with this exact structure:
             # Provide context about what we're planning
             from agents.base import _thought_callback
             if _thought_callback:
-                _thought_callback("Planner", f"Creating blog plan for '{topic}': Analyzing audience needs, structuring content outline, and identifying research requirements...")
+                _thought_callback("Planner", f"Analyzing target audience and creating a strategic content plan...")
+                import time
+                time.sleep(0.3)  # Brief pause for UI update
+                _thought_callback("Planner", f"Structuring outline with 5-7 sections, defining thesis, and identifying key research areas...")
+                time.sleep(0.3)
+                _thought_callback("Planner", f"Generating search queries and planning content flow for maximum engagement...")
             
             response = self.call_llm(prompt, capture_thoughts=False)
         except Exception as e:
@@ -105,9 +122,18 @@ Return your response as a JSON object with this exact structure:
                 response = response.split("```")[1].split("```")[0].strip()
             
             plan = json.loads(response)
+            
+            # Final thought after successful parsing
+            from agents.base import _thought_callback
+            if _thought_callback:
+                outline_count = len(plan.get('outline', []))
+                _thought_callback("Planner", f"Plan complete! Created outline with {outline_count} sections ready for research.")
         except json.JSONDecodeError:
             # Fallback: create a basic structure
             plan = self._create_fallback_plan(topic, target_audience, tone)
+            from agents.base import _thought_callback
+            if _thought_callback:
+                _thought_callback("Planner", f"Plan complete! Created fallback outline ready for research.")
         
         return {
             "status": "success",

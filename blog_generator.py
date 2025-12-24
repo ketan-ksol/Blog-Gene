@@ -12,6 +12,7 @@ from agents import (
     ResearchAgent,
     WriterAgent,
     EditorAgent,
+    HumanizerAgent,
     SEOAgent,
     FactCheckAgent
 )
@@ -36,6 +37,7 @@ class BlogGenerator:
         self.research = ResearchAgent(model_name=model_name, temperature=temperature)
         self.writer = WriterAgent(model_name=model_name, temperature=temperature)
         self.editor = EditorAgent(model_name=model_name, temperature=temperature)
+        self.humanizer = HumanizerAgent(model_name=model_name, temperature=temperature)
         self.seo = SEOAgent(model_name=model_name, temperature=temperature)
         self.fact_check = FactCheckAgent(model_name=model_name, temperature=temperature)
     
@@ -97,13 +99,14 @@ class BlogGenerator:
             config.update(custom_config)
         
         # Step 1: Planning
-        print("📋 Step 1/6: Planning blog structure...")
+        print("📋 Step 1/7: Planning blog structure...")
         try:
             plan_result = self.planner.process({
                 "topic": topic,
                 "target_audience": config.get("target_audience"),
                 "tone": config.get("tone"),
-                "word_count": config.get("max_word_count", 2000)
+                "word_count": config.get("max_word_count", 2000),
+                "sections_per_article": config.get("sections_per_article", 5)
             })
         except Exception as e:
             error_msg = str(e)
@@ -131,7 +134,7 @@ class BlogGenerator:
         print(f"✓ Created outline with {len(plan.get('outline', []))} sections\n")
         
         # Step 2: Research
-        print("🔍 Step 2/6: Conducting research...")
+        print("🔍 Step 2/7: Conducting research...")
         research_result = self.research.process({
             "search_queries": plan.get("search_queries", []),
             "required_facts": plan.get("required_facts", []),
@@ -146,7 +149,7 @@ class BlogGenerator:
         print(f"✓ Found {research_result.get('sources_count', 0)} sources\n")
         
         # Step 3: Writing
-        print("✍️  Step 3/6: Writing content...")
+        print("✍️  Step 3/7: Writing content...")
         writer_result = self.writer.process({
             "outline": plan.get("outline", []),
             "thesis": plan.get("thesis", ""),
@@ -167,7 +170,7 @@ class BlogGenerator:
         print(f"✓ Wrote {writer_result.get('word_count', 0)} words across {writer_result.get('sections_written', 0)} sections\n")
         
         # Step 4: Editing
-        print("✏️  Step 4/6: Editing and refining...")
+        print("✏️  Step 4/7: Editing and refining...")
         editor_result = self.editor.process({
             "content": writer_result.get("content", {}),
             "tone": config.get("tone"),
@@ -192,10 +195,24 @@ class BlogGenerator:
             edited_content = temp_writer._add_images_to_content(edited_content, topic, plan.get("outline", []))
             editor_result["edited_content"] = edited_content
         
-        # Step 5: SEO Optimization
-        print("🔎 Step 5/6: Optimizing for SEO...")
-        seo_result = self.seo.process({
+        # Step 5: Humanize Content (Remove AI-generated patterns)
+        print("✍️  Step 5/7: Humanizing content (removing AI-generated patterns)...")
+        humanizer_result = self.humanizer.process({
             "content": editor_result.get("edited_content", {}),
+            "tone": config.get("tone"),
+            "reading_level": config.get("reading_level")
+        })
+        
+        if humanizer_result.get("status") != "success":
+            return {"status": "error", "message": "Humanization failed", "step": "humanizer"}
+        
+        humanizer_improvements = humanizer_result.get("improvements", [])
+        print(f"✓ Humanization complete. Made content sound more natural and human-written.\n")
+        
+        # Step 6: SEO Optimization
+        print("🔎 Step 6/7: Optimizing for SEO...")
+        seo_result = self.seo.process({
+            "content": humanizer_result.get("humanized_content", {}),
             "topic": topic,
             "target_keywords": target_keywords or config.get("target_keywords", []),
             "include_faq": config.get("include_faq", True),
@@ -207,23 +224,36 @@ class BlogGenerator:
         
         print(f"✓ SEO optimization complete. Keyword density: {seo_result.get('keyword_density', {})}\n")
         
-        # Step 6: Fact-checking & Safety
-        print("✅ Step 6/6: Fact-checking and safety review...")
-        fact_check_result = self.fact_check.process({
-            "content": seo_result.get("optimized_content", {}),
-            "fact_table": research_result.get("fact_table", {}),
-            "citations": research_result.get("citations", []),
-            "require_citations": config.get("require_citations", True),
-            "add_disclaimers": config.get("add_disclaimers", False),
-            "disclaimer_types": config.get("disclaimer_types", []),
-            "topic": topic
-        })
-        
-        if fact_check_result.get("status") != "success":
-            return {"status": "error", "message": "Fact-checking failed", "step": "fact_check"}
-        
-        verification_score = fact_check_result.get("verification_score", 0)
-        print(f"✓ Fact-checking complete. Verification score: {verification_score:.2%}\n")
+        # Step 7: Fact-checking & Safety (only if enabled)
+        fact_check_result = None
+        if config.get("fact_check_enabled", True):
+            print("✅ Step 7/7: Fact-checking and safety review...")
+            fact_check_result = self.fact_check.process({
+                "content": seo_result.get("optimized_content", {}),
+                "fact_table": research_result.get("fact_table", {}),
+                "citations": research_result.get("citations", []),
+                "require_citations": config.get("require_citations", True),
+                "add_disclaimers": config.get("add_disclaimers", False),
+                "disclaimer_types": config.get("disclaimer_types", []),
+                "topic": topic
+            })
+            
+            if fact_check_result.get("status") != "success":
+                return {"status": "error", "message": "Fact-checking failed", "step": "fact_check"}
+            
+            verification_score = fact_check_result.get("verification_score", 0)
+            print(f"✓ Fact-checking complete. Verification score: {verification_score:.2%}\n")
+        else:
+            print("⏭️  Step 7/7: Fact-checking skipped (disabled in configuration)\n")
+            # Use SEO result as final content if fact-checking is disabled
+            fact_check_result = {
+                "status": "success",
+                "verified_content": seo_result.get("optimized_content", {}),
+                "flagged_claims": [],
+                "disclaimers": "",
+                "citation_status": {},
+                "verification_score": 0.0
+            }
         
         # Compile final blog
         final_blog = self._compile_final_blog(
@@ -245,17 +275,25 @@ class BlogGenerator:
         for section in final_blog.get("sections", []):
             section_title = section.get("title", "")
             section_content = section.get("content", "")
-            # Skip References and FAQ sections from word count
-            if section_title not in ["References", "FAQ"]:
-                # Count words, excluding markdown syntax, URLs, and image links
-                words = section_content.split()
-                filtered_words = [w for w in words 
-                                 if not w.startswith('#') 
-                                 and not w.startswith('![') 
-                                 and not w.startswith('http') 
-                                 and not (w.startswith('[') and '](' in w)
-                                 and not w.startswith('*')]
-                content_word_count += len(filtered_words)
+            # Skip References, FAQ, and Disclaimer sections from word count
+            if section_title not in ["References", "FAQ", "Disclaimer"]:
+                # Remove markdown image syntax and URLs, but keep the text content
+                import re
+                # Remove markdown images: ![alt](url)
+                section_content = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', section_content)
+                # Remove URLs (http/https)
+                section_content = re.sub(r'https?://\S+', '', section_content)
+                # Remove markdown links but keep the text: [text](url) -> text
+                section_content = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', section_content)
+                # Remove HTML comments
+                section_content = re.sub(r'<!--.*?-->', '', section_content, flags=re.DOTALL)
+                # Remove markdown code blocks
+                section_content = re.sub(r'```[\s\S]*?```', '', section_content)
+                # Remove inline code but keep the text
+                section_content = re.sub(r'`([^`]+)`', r'\1', section_content)
+                # Count words (split by whitespace and filter empty strings)
+                words = [w.strip() for w in section_content.split() if w.strip()]
+                content_word_count += len(words)
         
         return {
             "status": "success",
@@ -263,8 +301,8 @@ class BlogGenerator:
             "output_file": str(output_file),
             "metadata": {
                 "topic": topic,
-                "word_count": content_word_count,  # Excludes references
-                "sections": len(final_blog.get("sections", [])),
+                "word_count": content_word_count,  # Excludes References, FAQ, and Disclaimer sections
+                "sections": len(final_blog.get("sections", [])),  # Includes all sections: Introduction, main sections, Conclusion, FAQ, Disclaimer
                 "verification_score": verification_score,
                 "generated_at": datetime.now().isoformat()
             }

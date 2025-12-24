@@ -35,11 +35,6 @@ class ResearchAgent(BaseAgent):
                 pass
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        from agents.base import _thought_callback
-        
-        topic = input_data.get("topic", "")
-        if _thought_callback:
-            _thought_callback("Research", f"Gathering research for '{topic}': Searching web sources, analyzing citations, and matching facts to references...")
         """
         Conduct research based on search queries and required facts.
         
@@ -54,6 +49,17 @@ class ResearchAgent(BaseAgent):
             - fact_table: dict mapping facts to sources
             - research_summary: str
         """
+        from agents.base import _thought_callback
+        import time
+        
+        topic = input_data.get("topic", "")
+        search_queries = input_data.get("search_queries", [])
+        
+        if _thought_callback:
+            _thought_callback("Research", f"Starting research phase: Preparing to search {len(search_queries)} queries...")
+            time.sleep(0.3)
+            _thought_callback("Research", f"Searching web sources and academic databases for relevant information...")
+        
         search_queries = input_data.get("search_queries", [])
         required_facts = input_data.get("required_facts", [])
         topic = input_data.get("topic", "")
@@ -69,7 +75,13 @@ class ResearchAgent(BaseAgent):
                 import urllib3
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
             
-            for query in search_queries[:5]:  # Limit to 5 queries
+            # Calculate how many results per query to get
+            num_queries = min(len(search_queries), 5)  # Limit to 5 queries
+            results_per_query = max(1, max_sources // num_queries) if num_queries > 0 else max_sources
+            # Cap at 5 results per query to avoid too many results
+            results_per_query = min(5, results_per_query)
+            
+            for query in search_queries[:num_queries]:
                 try:
                     # Temporarily disable SSL verification for this request if needed
                     if not self.ssl_verify:
@@ -92,12 +104,12 @@ class ResearchAgent(BaseAgent):
                         with no_ssl_verification():
                             results = self.tavily_client.search(
                                 query=query,
-                                max_results=min(3, max_sources // len(search_queries) + 1)
+                                max_results=results_per_query
                             )
                     else:
                         results = self.tavily_client.search(
                             query=query,
-                            max_results=min(3, max_sources // len(search_queries) + 1)
+                            max_results=results_per_query
                         )
                     
                     for result in results.get("results", []):
@@ -121,10 +133,20 @@ class ResearchAgent(BaseAgent):
         citations.extend(local_sources)
         
         # Match facts to sources
+        if _thought_callback:
+            _thought_callback("Research", f"Analyzing {len(citations)} sources and matching facts to citations...")
+            time.sleep(0.2)
+        
         fact_table = self._match_facts_to_sources(required_facts, citations)
         
         # Generate research summary
+        if _thought_callback:
+            _thought_callback("Research", f"Compiling research summary and verifying source credibility...")
+        
         research_summary = self._generate_research_summary(citations, fact_table, topic)
+        
+        if _thought_callback:
+            _thought_callback("Research", f"Research complete! Found {len(citations)} high-quality sources ready for content writing.")
         
         return {
             "status": "success",

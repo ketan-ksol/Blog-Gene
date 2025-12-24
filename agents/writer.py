@@ -17,12 +17,15 @@ class WriterAgent(BaseAgent):
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
         from agents.base import _thought_callback
+        import time
         
         topic = input_data.get("topic", "")
         outline = input_data.get("outline", [])
+        section_count = len(outline) if isinstance(outline, list) else 0
+        
         if _thought_callback:
-            section_count = len(outline) if isinstance(outline, list) else 0
-            _thought_callback("Writer", f"Writing content for '{topic}': Creating {section_count} sections with detailed explanations, examples, and actionable insights...")
+            _thought_callback("Writer", f"Starting content creation: Crafting engaging introduction...")
+            time.sleep(0.3)
         """
         Write blog content based on outline and research.
         
@@ -61,16 +64,34 @@ class WriterAgent(BaseAgent):
         words_per_section = max(200, (target_word_count - 200) // (len(outline) + 2))  # +2 for intro and conclusion
         
         # Write introduction first
+        if _thought_callback:
+            _thought_callback("Writer", f"Writing compelling introduction that hooks readers and introduces the topic...")
+        
         intro_content = self._write_introduction(thesis, angle, tone, reading_level, topic, min(200, words_per_section))
         content["Introduction"] = intro_content
         total_word_count += len(intro_content.split())
         
-        # Write each section
-        for i, section in enumerate(outline, 1):
-            section_title = section.get("section_title", f"Section {i}")
+        if _thought_callback:
+            _thought_callback("Writer", f"Introduction complete! Now writing {section_count} main sections with detailed content...")
+            time.sleep(0.3)
+        
+        # Write each section (skip Introduction and Conclusion if they're in the outline - we write them separately)
+        section_index = 0
+        for section in outline:
+            section_title = section.get("section_title", f"Section {section_index + 1}")
+            
+            # Skip Introduction and Conclusion from outline - we write them separately
+            if section_title in ["Introduction", "Conclusion"]:
+                continue
+            
+            section_index += 1
+            
+            if _thought_callback:
+                _thought_callback("Writer", f"Writing section {section_index}/{section_count}: '{section_title}' - Developing key points and examples...")
+                time.sleep(0.2)
             section_desc = section.get("description", "")
             subsections = section.get("subsections", [])
-            goals = section_goals.get(f"section_{i}", {})
+            goals = section_goals.get(f"section_{section_index}", {})
             
             section_content = self._write_section(
                 section_title=section_title,
@@ -81,8 +102,8 @@ class WriterAgent(BaseAgent):
                 citations=citations,
                 tone=tone,
                 reading_level=reading_level,
-                section_number=i,
-                total_sections=len(outline),
+                section_number=section_index,
+                total_sections=section_count,
                 topic=topic,
                 target_words=words_per_section
             )
@@ -90,7 +111,11 @@ class WriterAgent(BaseAgent):
             # Validate section has content
             if section_content and len(section_content.strip()) > 50:
                 content[section_title] = section_content
-                total_word_count += len(section_content.split())
+                word_count = len(section_content.split())
+                total_word_count += word_count
+                if _thought_callback:
+                    _thought_callback("Writer", f"Section {section_index}/{section_count} complete! ({word_count} words) Moving to next section...")
+                    time.sleep(0.2)
             else:
                 # Retry if content is too short
                 print(f"⚠️  Section '{section_title}' has insufficient content. Retrying...")
@@ -103,8 +128,8 @@ class WriterAgent(BaseAgent):
                     citations=citations,
                     tone=tone,
                     reading_level=reading_level,
-                    section_number=i,
-                    total_sections=len(outline),
+                    section_number=section_index,
+                    total_sections=section_count,
                     topic=topic,
                     target_words=words_per_section
                 )
@@ -116,13 +141,23 @@ class WriterAgent(BaseAgent):
                     content[section_title] = section_content or f"Content for {section_title} is being generated..."
         
         # Write conclusion
+        if _thought_callback:
+            _thought_callback("Writer", f"All sections complete! Writing powerful conclusion that summarizes key points...")
+            time.sleep(0.2)
+        
         conclusion = self._write_conclusion(thesis, tone, reading_level, topic, min(150, words_per_section))
         content["Conclusion"] = conclusion
         total_word_count += len(conclusion.split())
         
         # Add image descriptions to relevant sections (at least 1 per document)
+        if _thought_callback:
+            _thought_callback("Writer", f"Adding image descriptions to enhance visual appeal...")
+        
         # Note: Image search is disabled - only descriptions are added
         content = self._add_images_to_content(content, topic, outline)
+        
+        if _thought_callback:
+            _thought_callback("Writer", f"Content writing complete! Generated {total_word_count} words across {len(content)} sections (including introduction and conclusion). Ready for editing.")
         
         # Check if we need to adjust content to meet word count requirements
         if total_word_count < min_word_count:
@@ -146,17 +181,29 @@ class WriterAgent(BaseAgent):
             "status": "success",
             "content": content,
             "word_count": total_word_count,
-            "sections_written": len(content)
+            "sections_written": len(content)  # Count all sections including Introduction and Conclusion
         }
     
     def _write_introduction(self, thesis: str, angle: str, tone: str, reading_level: str, topic: str, target_words: int = 200) -> str:
         """Write the introduction section."""
-        prompt = f"""Write a compelling, focused introduction for a blog post about: {topic}
+        # Check if this is a technical topic
+        is_technical = self._is_technical_topic(topic)
+        technical_note = ""
+        if is_technical:
+            technical_note = "\n- Note: This is a technical topic - code examples may be included in relevant sections where they add practical value (e.g., implementation guides, configuration steps, troubleshooting)."
+        
+        prompt = f"""Write a compelling, marketing-focused introduction for a blog post about: {topic}
 
 Thesis: {thesis}
 Angle: {angle}
-Tone: {tone}
+Tone: {tone} (with marketing focus)
 Reading Level: {reading_level}
+
+MARKETING CONTEXT:
+- This blog is written by Ksolves, a company specializing in enterprise solutions
+- Ksolves helps businesses with implementation, migration, consulting, and modernization
+- The tone should be informative yet marketing-oriented - helping readers understand solutions while positioning Ksolves as a partner
+- Naturally mention Ksolves where it makes sense, but don't force it - focus on value first
 
 Requirements:
 - Hook the reader in the first sentence with a specific, relevant point about {topic}
@@ -164,21 +211,31 @@ Requirements:
 - Focus specifically on {topic} - avoid generic information
 - Establish the problem or challenge related to {topic}
 - Present the thesis clearly in relation to {topic}
-- Preview what the article will cover about {topic} (mention the specific mistakes/solutions)
+- Preview what the article will cover about {topic} (mention the specific mistakes/solutions){technical_note}
 - Length: {target_words} words MINIMUM
-- Use {tone} tone appropriate for {reading_level} reading level
+- Use {tone} tone with marketing focus appropriate for {reading_level} reading level
 - Be specific and topic-focused, not generic
-- Write in an engaging, conversational style that draws readers in
+- Write in an engaging, conversational marketing style that draws readers in
 - Include a transition sentence that leads into the main content
 
 Structure:
-1. Opening hook about {topic} and its importance/impact
-2. Context about the challenges/problems
+1. Opening hook about {topic} and its importance/impact (marketing angle)
+2. Context about the challenges/problems businesses face
 3. Thesis statement
 4. Preview of what's coming
 
 Write the introduction content. DO NOT include any markdown headers.
-Write substantial, focused content about {topic} that hooks the reader and sets up the article."""
+Write substantial, focused content about {topic} that hooks the reader and sets up the article.
+
+WRITING STYLE - MARKETING + HUMAN:
+- Write naturally and conversationally - as if you're telling a story or explaining to a friend
+- Vary your sentence structure - mix short impactful sentences with longer explanatory ones
+- Use natural language - avoid overly formal or robotic phrasing
+- Start with a hook that feels authentic, not formulaic
+- Don't use AI-sounding phrases like "In today's world" or "In the realm of"
+- Write with personality and voice - make it engaging and human
+- Use marketing language naturally - focus on benefits, solutions, and value
+- Position challenges as opportunities for improvement"""
         
         return self.call_llm(prompt)
     
@@ -205,6 +262,53 @@ Write substantial, focused content about {topic} that hooks the reader and sets 
         
         topic_context = f" This section is part of a blog post specifically about: {topic}. Focus on {topic} and avoid generic information." if topic else ""
         
+        # Check if this is a technical topic and if code examples would be relevant
+        is_technical = self._is_technical_topic(topic)
+        code_examples_instruction = ""
+        if is_technical:
+            # Check if this section would benefit from code examples
+            section_lower = section_title.lower()
+            description_lower = description.lower() if description else ""
+            subsections_lower = ' '.join(subsections).lower() if subsections else ""
+            combined_text = f"{section_lower} {description_lower} {subsections_lower}"
+            
+            # Only suggest code examples for sections that would actually need them
+            code_relevant_keywords = [
+                'how to', 'fix', 'implement', 'configure', 'setup', 'install', 'troubleshoot',
+                'example', 'code', 'snippet', 'configuration', 'command', 'script',
+                'mistake', 'error', 'solution', 'best practice', 'pattern', 'api',
+                'sdk', 'integration', 'deployment', 'migration', 'optimization'
+            ]
+            
+            needs_code = any(keyword in combined_text for keyword in code_relevant_keywords)
+            
+            if needs_code:
+                code_examples_instruction = """
+CODE EXAMPLES (ONLY when truly needed):
+- Include code examples ONLY if they directly help explain or demonstrate the concept
+- DO NOT add code examples just for the sake of having them - they must add real value
+- Code examples should be:
+  * Real, working examples (not pseudocode)
+  * Properly formatted in markdown code blocks with appropriate language tags (e.g., ```python, ```javascript, ```yaml, ```bash, ```json)
+  * Contextual - explain what the code does and why it's relevant
+  * Include comments in code when helpful
+  * Show both "wrong" and "right" approaches when demonstrating mistakes/fixes
+- Include code examples ONLY in these cases:
+  * "How to Fix" or "Best Practices" subsections that show actual implementation
+  * When explaining specific configuration or setup steps
+  * When demonstrating implementation patterns that readers can copy
+  * When showing troubleshooting steps with actual commands/code
+- DO NOT include code examples if:
+  * The section is conceptual or theoretical
+  * The section discusses general principles without specific implementation
+  * Code would not add clarity or practical value
+- Format: Use triple backticks with language identifier, e.g.:
+  ```python
+  # Example code here
+  ```
+- Make code examples practical and directly applicable to {topic}
+"""
+        
         prompt = f"""Write section {section_number} of {total_sections} for a blog post about {topic}.{topic_context}
 
 Section Title: {section_title}
@@ -221,12 +325,20 @@ Relevant Facts and Data:
 Relevant Citations:
 {self._format_citations_for_prompt(relevant_citations)}
 
+MARKETING CONTEXT:
+- This blog is written by Ksolves, a company specializing in enterprise solutions, implementation, migration, and consulting
+- Naturally position Ksolves as a solution provider where relevant (e.g., "Ksolves specializes in...", "With Ksolves' expertise...", "Partnering with Ksolves can help...")
+- Focus on value, solutions, and benefits - marketing-oriented but informative
+- Include calls to action naturally where appropriate
+- Don't over-promote - mention Ksolves organically when discussing solutions or services
+
 Requirements:
-- Tone: {tone}
+- Tone: {tone} (with marketing focus - informative yet solution-oriented)
 - Reading Level: {reading_level}
 - Length: {target_words} words MINIMUM - write comprehensive, detailed, actionable content
 - FOCUS SPECIFICALLY ON {topic.upper()} - avoid generic information about the broader topic
-
+- Marketing angle: Position challenges as opportunities, emphasize solutions and benefits
+{code_examples_instruction}
 Content Structure (follow this pattern for mistake/problem sections):
 1. Start with a clear explanation of the mistake/problem
 2. Include a "Where Developers Make Mistakes" or "Common Mistakes" subsection with specific examples
@@ -245,35 +357,116 @@ For other sections:
 - Use bullet points and lists for clarity
 - Include specific numbers, metrics, or technical details when relevant
 
+WRITING STYLE - MAKE IT SOUND HUMAN:
+- Write naturally, as if you're explaining to a colleague or friend
+- Vary sentence length - mix short punchy sentences with longer explanatory ones
+- Use natural transitions - avoid formulaic phrases like "Furthermore", "In conclusion", "It is important to note", "Additionally"
+- Start paragraphs with varied openings - don't always start with "The", "This", "It"
+- Use contractions where appropriate (e.g., "don't", "can't", "it's") to sound more conversational
+- Include occasional rhetorical questions to engage readers
+- Use active voice primarily, but mix in passive voice naturally when it flows better
+- Avoid repetitive sentence structures - vary how you present information
+- Write with personality and voice - don't sound robotic or overly formal
+- Use specific, concrete language instead of vague generalizations
+- Include occasional asides or parenthetical thoughts that feel natural
+- Don't overuse bullet points - use them strategically, but also write flowing paragraphs
+
+AVOID AI-SOUNDING PATTERNS:
+- Don't start every paragraph with "The" or "This"
+- Avoid phrases like "In today's digital landscape", "In the realm of", "It is worth noting"
+- Don't use excessive qualifiers like "very", "extremely", "significantly" in every sentence
+- Avoid formulaic structures like "First... Second... Third..." unless truly necessary
+- Don't overuse transition words - let ideas flow naturally
+- Avoid repetitive patterns - if you used a structure once, vary it next time
+
 CRITICAL: 
 - Write the section content. DO NOT include the section title "## {section_title}" as a header.
 - Start directly with the content. Use ### for H3 subsections.
 - Write AT LEAST {target_words} words of substantial, detailed, topic-focused content.
 - Do not write generic or superficial content - be specific, detailed, and actionable.
-- Make it comprehensive enough that readers get real value."""
+- Make it comprehensive enough that readers get real value.
+- MOST IMPORTANTLY: Write as a human expert would - naturally, conversationally, with personality and flow."""
         
         return self.call_llm(prompt)
     
     def _write_conclusion(self, thesis: str, tone: str, reading_level: str, topic: str, target_words: int = 150) -> str:
         """Write the conclusion section."""
-        prompt = f"""Write a strong, focused conclusion for a blog post about: {topic}
+        prompt = f"""Write a strong, marketing-focused conclusion for a blog post about: {topic}
 
 Thesis: {thesis}
-Tone: {tone}
+Tone: {tone} (with marketing focus)
 Reading Level: {reading_level}
+
+MARKETING CONTEXT:
+- This blog is written by Ksolves, a company specializing in enterprise solutions
+- Include a natural call to action mentioning Ksolves as a partner
+- Position Ksolves as the solution provider who can help with implementation, migration, or consulting
+- Reference the example style: "Ksolves: Your Partner in [topic area]" or similar positioning
+- Make it feel like a natural conclusion that invites partnership, not a hard sell
 
 Requirements:
 - Reinforce the main thesis specifically in relation to {topic}
 - Summarize key takeaways about {topic}
-- Provide a call to action or forward-looking statement related to {topic}
+- Include a strong call to action naturally mentioning Ksolves as a solution partner
+- Position Ksolves as offering: architecture assessment, migration planning, implementation, consulting, modernization, performance tuning, etc.
 - Length: {target_words} words
-- Use {tone} tone appropriate for {reading_level} reading level
+- Use {tone} tone with marketing focus appropriate for {reading_level} reading level
 - Focus on {topic} - avoid generic conclusions
+- End with value proposition and partnership invitation
+
+Example style reference:
+"Ksolves: Your Partner in [topic area]. Are you considering [relevant action]? Ksolves is here to make your journey smooth, scalable, and cost-effective. We specialize in [relevant services]. Our goal? Help you [benefit] with our deep expertise."
 
 Write the conclusion content. DO NOT include any markdown headers.
-Write substantial, topic-focused content ({target_words} words) that reinforces key points about {topic}."""
+Write substantial, topic-focused content ({target_words} words) that reinforces key points and includes a natural call to action with Ksolves.
+
+WRITING STYLE - MARKETING + HUMAN:
+- Write naturally - avoid formulaic conclusions like "In conclusion" or "To summarize"
+- Vary sentence structure and length for natural flow
+- Use conversational marketing language while maintaining professionalism
+- End with a strong, memorable closing that includes Ksolves as a partner
+- Don't sound robotic or overly structured - let it flow naturally
+- Make the call to action feel helpful and consultative, not pushy"""
         
         return self.call_llm(prompt)
+    
+    def _is_technical_topic(self, topic: str) -> bool:
+        """Detect if a topic is technical/IT-related."""
+        if not topic:
+            return False
+        
+        topic_lower = topic.lower()
+        
+        # Technical keywords and patterns
+        technical_indicators = [
+            # Programming languages
+            'python', 'java', 'javascript', 'typescript', 'c++', 'c#', 'go', 'rust', 'ruby', 'php', 'swift', 'kotlin',
+            # Technologies and frameworks
+            'api', 'sdk', 'framework', 'library', 'database', 'sql', 'nosql', 'mongodb', 'postgresql', 'mysql',
+            'docker', 'kubernetes', 'k8s', 'container', 'microservice', 'aws', 'azure', 'gcp', 'cloud',
+            'kafka', 'redis', 'elasticsearch', 'rabbitmq', 'nginx', 'apache', 'server', 'backend', 'frontend',
+            'react', 'angular', 'vue', 'node', 'express', 'django', 'flask', 'spring', 'laravel',
+            'devops', 'ci/cd', 'jenkins', 'git', 'github', 'gitlab', 'terraform', 'ansible',
+            'machine learning', 'ai', 'ml', 'data science', 'analytics', 'big data',
+            'security', 'authentication', 'authorization', 'encryption', 'ssl', 'tls', 'oauth',
+            'rest', 'graphql', 'soap', 'http', 'https', 'tcp', 'udp', 'protocol',
+            'algorithm', 'data structure', 'architecture', 'design pattern', 'refactoring',
+            'testing', 'unit test', 'integration test', 'qa', 'debugging', 'logging',
+            'performance', 'optimization', 'scalability', 'monitoring', 'observability',
+            # IT infrastructure
+            'server', 'network', 'infrastructure', 'deployment', 'configuration', 'setup', 'installation',
+            'troubleshooting', 'error', 'exception', 'bug', 'fix', 'patch', 'update', 'migration',
+            # Code-related terms
+            'code', 'programming', 'development', 'software', 'application', 'system', 'platform',
+            'implementation', 'integration', 'deployment', 'configuration', 'setup'
+        ]
+        
+        # Check if topic contains technical indicators
+        for indicator in technical_indicators:
+            if indicator in topic_lower:
+                return True
+        
+        return False
     
     def _extract_relevant_facts(self, section_title: str, fact_table: Dict) -> List[Dict]:
         """Extract facts relevant to a section."""
@@ -457,8 +650,8 @@ Write the expanded content, maintaining ALL existing content and adding substant
         # Create a concise 2-line description from the detailed one
         short_description = self._create_short_image_description(section_title, topic, image_description)
         
-        # Return 2-line description only (no image URLs)
-        return f"\n<!-- Image needed: {short_description} -->\n\n*[Image suggestion: {short_description}]*\n"
+        # Return only HTML comment format (cleaner, doesn't show in rendered markdown)
+        return f"\n<!-- Image needed: {short_description} -->\n"
     
     def _extract_image_from_citations(self, section_title: str, topic: str, citations: List[Dict], section_content: str = "", image_description: str = "") -> Optional[str]:
         """Extract image URLs by fetching and parsing web pages from citations. Checks all citations and returns the best image."""

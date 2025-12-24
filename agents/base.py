@@ -85,25 +85,20 @@ class BaseAgent(ABC):
         # Can be implemented with langchain_core.prompts if needed
         return template
     
-    def call_llm(self, prompt: str, system_message: Optional[str] = None, capture_thoughts: bool = True) -> str:
+    def call_llm(self, prompt: str, system_message: Optional[str] = None, capture_thoughts: bool = False) -> str:
         """Call the LLM with a prompt.
         
         Args:
             prompt: The prompt to send to the LLM
             system_message: Optional system message
-            capture_thoughts: If True, capture AI reasoning/thoughts
+            capture_thoughts: If True, capture AI reasoning/thoughts (default: False, agents provide explicit thoughts)
         """
         from langchain_core.messages import HumanMessage, SystemMessage
         import time
         
-        # If capturing thoughts, notify that we're starting
-        if capture_thoughts and _thought_callback:
-            # Extract a brief summary of what we're doing from the prompt
-            task_summary = prompt[:150].replace('\n', ' ').strip()
-            if len(task_summary) < len(prompt):
-                task_summary += "..."
-            thought_text = f"Analyzing task: {task_summary}"
-            _thought_callback(self.agent_name, thought_text)
+        # Note: Automatic thought capture is disabled by default.
+        # Agents should provide explicit, user-friendly thoughts in their process() methods.
+        # This prevents showing raw prompt text to users.
         
         messages = []
         if system_message:

@@ -8,12 +8,6 @@ class FactCheckAgent(BaseAgent):
     """Agent responsible for fact-checking and safety compliance."""
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        from agents.base import _thought_callback
-        
-        content = input_data.get("content", {})
-        if _thought_callback:
-            section_count = len(content) if isinstance(content, dict) else 0
-            _thought_callback("FactCheck", f"Fact-checking content: Verifying claims, checking citations, and adding safety disclaimers for {section_count} sections...")
         """
         Fact-check content and add safety disclaimers.
         
@@ -32,6 +26,19 @@ class FactCheckAgent(BaseAgent):
             - disclaimers: str
             - citation_status: dict
         """
+        from agents.base import _thought_callback
+        import time
+        
+        content = input_data.get("content", {})
+        section_count = len(content) if isinstance(content, dict) else 0
+        
+        if _thought_callback:
+            _thought_callback("FactCheck", f"Starting fact-check: Scanning {section_count} sections for claims requiring verification...")
+            time.sleep(0.3)
+            _thought_callback("FactCheck", f"Cross-referencing claims with research citations and verifying accuracy...")
+            time.sleep(0.3)
+            _thought_callback("FactCheck", f"Adding citation markers and safety disclaimers where needed...")
+        
         content = input_data.get("content", {})
         fact_table = input_data.get("fact_table", {})
         citations = input_data.get("citations", [])
@@ -41,18 +48,33 @@ class FactCheckAgent(BaseAgent):
         topic = input_data.get("topic", "")
         
         # Identify claims that need verification
+        if _thought_callback:
+            _thought_callback("FactCheck", f"Scanning {section_count} sections for factual claims requiring verification...")
+            time.sleep(0.3)
         flagged_claims = self._identify_claims(content, fact_table)
         
         # Verify claims against sources
+        if _thought_callback:
+            _thought_callback("FactCheck", f"Cross-referencing {len(flagged_claims)} claims with research citations...")
+            time.sleep(0.3)
         citation_status = self._verify_claims(flagged_claims, fact_table, citations)
         
         # Add citation markers to content
+        if _thought_callback:
+            _thought_callback("FactCheck", "Adding citation markers to verified claims...")
+            time.sleep(0.2)
         verified_content = self._add_citations(content, citation_status, require_citations)
         
         # Generate disclaimers if needed
         disclaimers = ""
         if add_disclaimers:
+            if _thought_callback:
+                _thought_callback("FactCheck", "Generating safety disclaimers...")
             disclaimers = self._generate_disclaimers(topic, disclaimer_types)
+        
+        verification_score = self._calculate_verification_score(citation_status)
+        if _thought_callback:
+            _thought_callback("FactCheck", f"Fact-checking complete! Verification score: {verification_score:.0%}")
         
         return {
             "status": "success",
@@ -60,7 +82,7 @@ class FactCheckAgent(BaseAgent):
             "flagged_claims": flagged_claims,
             "disclaimers": disclaimers,
             "citation_status": citation_status,
-            "verification_score": self._calculate_verification_score(citation_status)
+            "verification_score": verification_score
         }
     
     def _identify_claims(self, content: Dict[str, str], fact_table: Dict) -> List[Dict[str, Any]]:

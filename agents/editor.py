@@ -7,12 +7,6 @@ class EditorAgent(BaseAgent):
     """Agent responsible for editing and improving blog content."""
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        from agents.base import _thought_callback
-        
-        content = input_data.get("content", {})
-        if _thought_callback:
-            section_count = len(content) if isinstance(content, dict) else 0
-            _thought_callback("Editor", f"Editing and refining content: Improving flow, removing repetitions, ensuring clarity across {section_count} sections...")
         """
         Edit and improve blog content.
         
@@ -27,6 +21,19 @@ class EditorAgent(BaseAgent):
             - improvements: list of changes made
             - word_count: int
         """
+        from agents.base import _thought_callback
+        import time
+        
+        content = input_data.get("content", {})
+        section_count = len(content) if isinstance(content, dict) else 0
+        
+        if _thought_callback:
+            _thought_callback("Editor", f"Starting editing phase: Analyzing {section_count} sections for improvements...")
+            time.sleep(0.3)
+            _thought_callback("Editor", f"Improving flow and transitions between sections for better readability...")
+            time.sleep(0.3)
+            _thought_callback("Editor", f"Removing repetitions and enhancing clarity while preserving key information...")
+        
         content = input_data.get("content", {})
         tone = input_data.get("tone", "professional")
         reading_level = input_data.get("reading_level", "college")
@@ -108,20 +115,30 @@ class EditorAgent(BaseAgent):
     
     def _improve_flow(self, content: str, tone: str, reading_level: str) -> str:
         """Improve flow and transitions between sections."""
-        prompt = f"""You are an expert editor. Improve the flow and coherence of this blog post.
+        prompt = f"""You are an expert editor. Improve the flow and coherence of this blog post to make it sound more human-written and natural.
 
 Tone: {tone}
 Reading Level: {reading_level}
 
 Focus on:
-1. Smooth transitions between sections
-2. Logical progression of ideas
-3. Connecting paragraphs naturally
-4. Maintaining narrative flow
+1. Smooth transitions between sections (avoid formulaic transitions like "Furthermore", "In addition")
+2. Logical progression of ideas with natural flow
+3. Connecting paragraphs naturally without forced connectors
+4. Maintaining narrative flow that feels conversational
+5. Varying sentence structure and length for human-like rhythm
+6. Making it sound like a human expert wrote it, not AI
+
+CRITICAL - MAKE IT SOUND HUMAN:
+- Vary sentence openings - don't start every paragraph the same way
+- Mix short and long sentences naturally
+- Remove AI-sounding phrases and formulaic structures
+- Use contractions where appropriate for natural flow
+- Let ideas flow organically rather than forcing rigid structures
+- Add personality and voice while maintaining professionalism
 
 CRITICAL: Preserve ALL image markdown syntax exactly as written (e.g., ![Alt text](url) and *description*). Do not remove, modify, or move images.
 
-Return the improved article with better flow. Keep all the original content and structure, just improve transitions and connections.
+Return the improved article that sounds like it was written by a human expert, not AI. Keep all the original content and structure, just improve transitions and make it more natural.
 
 Article:
 {content}
@@ -131,20 +148,29 @@ Article:
     
     def _improve_clarity(self, content: str, reading_level: str) -> str:
         """Improve clarity and readability."""
-        prompt = f"""You are an expert editor. Improve the clarity and readability of this blog post.
+        prompt = f"""You are an expert editor. Improve the clarity and readability of this blog post while making it sound more human-written.
 
 Target Reading Level: {reading_level}
 
 Focus on:
-1. Simplifying complex sentences
-2. Clarifying ambiguous statements
-3. Using precise language
-4. Ensuring each paragraph has a clear purpose
-5. Making technical concepts accessible
+1. Simplifying complex sentences while keeping natural flow
+2. Clarifying ambiguous statements with human-like explanations
+3. Using precise language that sounds natural, not robotic
+4. Ensuring each paragraph has a clear purpose and flows naturally
+5. Making technical concepts accessible with conversational explanations
+6. Varying sentence structure to avoid repetitive patterns
+7. Using natural transitions instead of formulaic connectors
+
+CRITICAL - SOUND HUMAN:
+- Write as a human expert would explain to a colleague
+- Avoid overly structured or formulaic language
+- Use natural phrasing and varied sentence patterns
+- Make it conversational while maintaining clarity
+- Remove AI-sounding patterns and repetitive structures
 
 CRITICAL: Preserve ALL image markdown syntax exactly as written (e.g., ![Alt text](url) and *description*). Do not remove, modify, or move images.
 
-Return the improved article with enhanced clarity. Maintain the same meaning and structure.
+Return the improved article that's clearer AND sounds more human-written. Maintain the same meaning and structure.
 
 Article:
 {content}
@@ -172,7 +198,7 @@ Article:
         content = "\n".join(cleaned_lines)
         
         # Then use LLM for content deduplication
-        prompt = f"""You are an expert editor. Remove repetitive content from this blog post.
+        prompt = f"""You are an expert editor. Remove repetitive content from this blog post while maintaining natural, human-like writing.
 
 Focus on:
 1. Eliminating repeated phrases or sentences
@@ -180,10 +206,18 @@ Focus on:
 3. Removing unnecessary repetition of the same point
 4. Keeping only the best version of repeated concepts
 5. Removing duplicate section headers (keep only the first occurrence)
+6. Varying sentence structures and paragraph openings after removing repetitions
+
+CRITICAL - MAINTAIN HUMAN VOICE:
+- After removing repetitions, ensure the writing still flows naturally
+- Don't make it sound overly edited or robotic
+- Keep the conversational, human tone
+- Vary how information is presented to avoid new repetitive patterns
+- Make sure it still sounds like a human expert wrote it
 
 CRITICAL: Preserve ALL image markdown syntax exactly as written (e.g., ![Alt text](url) and *description*). Do not remove, modify, or move images.
 
-Return the article without repetitions. Maintain all unique information and insights.
+Return the article without repetitions, but still sounding natural and human-written. Maintain all unique information and insights.
 
 Article:
 {content}

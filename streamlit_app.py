@@ -57,6 +57,30 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         margin-top: 1rem;
     }
+    .ai-thinking {
+        margin-top: 0.75rem;
+        padding: 0.75rem;
+        background-color: #e7f3ff;
+        border-radius: 0.25rem;
+        border-left: 3px solid #2196F3;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+    }
+    .ai-thinking-label {
+        font-size: 0.95rem;
+        color: #1976D2;
+        font-weight: bold;
+        margin-bottom: 0.25rem;
+    }
+    .ai-thinking-text {
+        font-size: 0.95rem;
+        color: #424242;
+        font-style: italic;
+        word-wrap: break-word;
+        overflow-wrap: break-word;
+        white-space: normal;
+        line-height: 1.4;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -67,6 +91,8 @@ if 'current_step' not in st.session_state:
     st.session_state.current_step = None
 if 'step_messages' not in st.session_state:
     st.session_state.step_messages = []
+if 'user_config' not in st.session_state:
+    st.session_state.user_config = None
 
 # Custom stream handler to capture print statements
 class StreamlitHandler:
@@ -131,44 +157,153 @@ def load_config_values():
 with st.sidebar:
     st.header("⚙️ Configuration")
     
-    # Load and display configuration values
-    config = load_config_values()
+    # Load default configuration values
+    default_config = load_config_values()
     
-    # Configuration display with expanders
+    # Initialize user config in session state if not present
+    if st.session_state.user_config is None:
+        st.session_state.user_config = default_config.copy()
+    
+    # Get current config (use session state if available, otherwise defaults)
+    config = st.session_state.user_config
+    
+    # Configuration editing with expanders
     with st.expander("📝 Content Settings", expanded=True):
-        st.markdown(f"**Tone:** `{config.get('tone', 'professional')}`")
-        st.markdown(f"**Reading Level:** `{config.get('reading_level', 'college')}`")
-        st.markdown(f"**Target Audience:** `{config.get('target_audience', 'enterprise professionals')}`")
-        st.markdown(f"**Min Word Count:** `{config.get('min_word_count', 1000)}`")
-        st.markdown(f"**Max Word Count:** `{config.get('max_word_count', 1500)}`")
-        st.markdown(f"**Sections per Article:** `{config.get('sections_per_article', 5)}`")
+        tone = st.selectbox(
+            "Tone",
+            ["professional", "casual", "formal", "conversational", "technical"],
+            index=["professional", "casual", "formal", "conversational", "technical"].index(config.get('tone', 'professional')) if config.get('tone', 'professional') in ["professional", "casual", "formal", "conversational", "technical"] else 0
+        )
+        reading_level = st.selectbox(
+            "Reading Level",
+            ["high school", "college", "graduate", "expert"],
+            index=["high school", "college", "graduate", "expert"].index(config.get('reading_level', 'college')) if config.get('reading_level', 'college') in ["high school", "college", "graduate", "expert"] else 1
+        )
+        target_audience = st.text_input(
+            "Target Audience",
+            value=config.get('target_audience', 'enterprise professionals')
+        )
+        min_word_count = st.number_input(
+            "Min Word Count",
+            min_value=500,
+            max_value=5000,
+            value=config.get('min_word_count', 1000),
+            step=100
+        )
+        max_word_count = st.number_input(
+            "Max Word Count",
+            min_value=1000,
+            max_value=10000,
+            value=config.get('max_word_count', 1500),
+            step=100
+        )
+        sections_per_article = st.number_input(
+            "Sections per Article",
+            min_value=3,
+            max_value=10,
+            value=config.get('sections_per_article', 5),
+            step=1
+        )
+        
+        # Update session state
+        st.session_state.user_config['tone'] = tone
+        st.session_state.user_config['reading_level'] = reading_level
+        st.session_state.user_config['target_audience'] = target_audience
+        st.session_state.user_config['min_word_count'] = min_word_count
+        st.session_state.user_config['max_word_count'] = max_word_count
+        st.session_state.user_config['sections_per_article'] = sections_per_article
     
     with st.expander("🔍 SEO Settings", expanded=False):
-        st.markdown(f"**Include FAQ:** `{config.get('include_faq', True)}`")
-        st.markdown(f"**Include Meta Tags:** `{config.get('include_meta_tags', True)}`")
-        keywords = config.get('target_keywords', [])
-        if keywords:
-            st.markdown(f"**Target Keywords:** `{', '.join(keywords)}`")
+        include_faq = st.checkbox(
+            "Include FAQ",
+            value=config.get('include_faq', True)
+        )
+        include_meta_tags = st.checkbox(
+            "Include Meta Tags",
+            value=config.get('include_meta_tags', True)
+        )
+        target_keywords_str = st.text_input(
+            "Target Keywords",
+            value=', '.join(config.get('target_keywords', [])) if isinstance(config.get('target_keywords', []), list) else str(config.get('target_keywords', '')),
+            help="Comma-separated keywords for SEO"
+        )
+        
+        # Update session state
+        st.session_state.user_config['include_faq'] = include_faq
+        st.session_state.user_config['include_meta_tags'] = include_meta_tags
+        if target_keywords_str:
+            st.session_state.user_config['target_keywords'] = [k.strip() for k in target_keywords_str.split(',') if k.strip()]
         else:
-            st.markdown(f"**Target Keywords:** `[]` (none)")
+            st.session_state.user_config['target_keywords'] = []
     
     with st.expander("🤖 Model Settings", expanded=False):
-        st.markdown(f"**Model Name:** `{config.get('model_name', 'gpt-4o')}`")
-        st.markdown(f"**Temperature:** `{config.get('temperature', 0.7)}`")
+        model_name = st.selectbox(
+            "Model Name",
+            ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
+            index=["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"].index(config.get('model_name', 'gpt-4o')) if config.get('model_name', 'gpt-4o') in ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"] else 0
+        )
+        temperature = st.slider(
+            "Temperature",
+            min_value=0.0,
+            max_value=2.0,
+            value=float(config.get('temperature', 0.7)),
+            step=0.1,
+            help="Higher values make output more creative, lower values more focused"
+        )
+        
+        # Update session state
+        st.session_state.user_config['model_name'] = model_name
+        st.session_state.user_config['temperature'] = temperature
     
     with st.expander("🔒 Safety & Compliance", expanded=False):
-        st.markdown(f"**Require Citations:** `{config.get('require_citations', True)}`")
-        st.markdown(f"**Add Disclaimers:** `{config.get('add_disclaimers', False)}`")
-        disclaimer_types = config.get('disclaimer_types', [])
-        if disclaimer_types:
-            st.markdown(f"**Disclaimer Types:** `{', '.join(disclaimer_types)}`")
+        require_citations = st.checkbox(
+            "Require Citations",
+            value=config.get('require_citations', True)
+        )
+        add_disclaimers = st.checkbox(
+            "Add Disclaimers",
+            value=config.get('add_disclaimers', False)
+        )
+        disclaimer_types_str = st.text_input(
+            "Disclaimer Types",
+            value=', '.join(config.get('disclaimer_types', [])) if isinstance(config.get('disclaimer_types', []), list) else str(config.get('disclaimer_types', '')),
+            help="Comma-separated disclaimer types (e.g., medical, financial, legal)"
+        )
+        
+        # Update session state
+        st.session_state.user_config['require_citations'] = require_citations
+        st.session_state.user_config['add_disclaimers'] = add_disclaimers
+        if disclaimer_types_str:
+            st.session_state.user_config['disclaimer_types'] = [d.strip() for d in disclaimer_types_str.split(',') if d.strip()]
         else:
-            st.markdown(f"**Disclaimer Types:** `[]` (none)")
+            st.session_state.user_config['disclaimer_types'] = []
     
     with st.expander("🔬 Agent Settings", expanded=False):
-        st.markdown(f"**Enable Web Search:** `{config.get('enable_web_search', True)}`")
-        st.markdown(f"**Max Research Sources:** `{config.get('max_research_sources', 10)}`")
-        st.markdown(f"**Fact Check Enabled:** `{config.get('fact_check_enabled', True)}`")
+        enable_web_search = st.checkbox(
+            "Enable Web Search",
+            value=config.get('enable_web_search', True)
+        )
+        max_research_sources = st.number_input(
+            "Max Research Sources",
+            min_value=1,
+            max_value=50,
+            value=config.get('max_research_sources', 10),
+            step=1
+        )
+        fact_check_enabled = st.checkbox(
+            "Fact Check Enabled",
+            value=config.get('fact_check_enabled', True)
+        )
+        
+        # Update session state
+        st.session_state.user_config['enable_web_search'] = enable_web_search
+        st.session_state.user_config['max_research_sources'] = max_research_sources
+        st.session_state.user_config['fact_check_enabled'] = fact_check_enabled
+    
+    # Reset to defaults button
+    if st.button("🔄 Reset to Defaults", use_container_width=True):
+        st.session_state.user_config = default_config.copy()
+        st.rerun()
     
     st.divider()
     
@@ -202,6 +337,13 @@ with st.sidebar:
 
 # Main content area
 if generate_button and topic:
+    # Get user configuration
+    user_config = st.session_state.user_config if st.session_state.user_config else load_config_values()
+    
+    # Set environment variables for model settings (agents read from env)
+    os.environ["MODEL_NAME"] = user_config.get('model_name', 'gpt-4o')
+    os.environ["TEMPERATURE"] = str(user_config.get('temperature', 0.7))
+    
     # Initialize generator
     with st.spinner("Initializing blog generator..."):
         generator = BlogGenerator()
@@ -217,17 +359,19 @@ if generate_button and topic:
         status_text = st.empty()
     
     with steps_container:
-        st.header("🔄 Generation Steps")
+        st.header("⚡ Live AI Writing Process")
+        st.caption("Watch the AI agents collaborate in real-time to create your blog")
         steps_display = st.empty()
     
     # Track steps
     steps = [
-        ("Planning blog structure", "📋", "Step 1/6"),
-        ("Conducting research", "🔍", "Step 2/6"),
-        ("Writing content", "✍️", "Step 3/6"),
-        ("Editing and refining", "✏️", "Step 4/6"),
-        ("Optimizing for SEO", "🔎", "Step 5/6"),
-        ("Fact-checking and safety review", "✅", "Step 6/6")
+        ("Planning blog structure", "📋", "Step 1/7"),
+        ("Conducting research", "🔍", "Step 2/7"),
+        ("Writing content", "✍️", "Step 3/7"),
+        ("Editing and refining", "✏️", "Step 4/7"),
+        ("Humanizing content", "✍️", "Step 5/7"),
+        ("Optimizing for SEO", "🔎", "Step 6/7"),
+        ("Fact-checking and safety review", "✅", "Step 7/7")
     ]
     
     # Create a placeholder for step-by-step updates
@@ -338,7 +482,7 @@ if generate_button and topic:
                     if not isinstance(text, str):
                         return
                     try:
-                        step_match = re.search(r'Step (\d+)/6', text)
+                        step_match = re.search(r'Step (\d+)/7', text)
                     except (TypeError, AttributeError):
                         return
                     if step_match:
@@ -418,12 +562,31 @@ if generate_button and topic:
         sys.stdout = stream_capture
         
         try:
+            # Prepare custom config (exclude model_name and temperature as they're set via env)
+            custom_config = {
+                'tone': user_config.get('tone'),
+                'reading_level': user_config.get('reading_level'),
+                'target_audience': user_config.get('target_audience'),
+                'min_word_count': user_config.get('min_word_count'),
+                'max_word_count': user_config.get('max_word_count'),
+                'sections_per_article': user_config.get('sections_per_article'),
+                'include_faq': user_config.get('include_faq'),
+                'include_meta_tags': user_config.get('include_meta_tags'),
+                'require_citations': user_config.get('require_citations'),
+                'add_disclaimers': user_config.get('add_disclaimers'),
+                'disclaimer_types': user_config.get('disclaimer_types'),
+                'enable_web_search': user_config.get('enable_web_search'),
+                'max_research_sources': user_config.get('max_research_sources'),
+                'fact_check_enabled': user_config.get('fact_check_enabled')
+            }
+            
             # Generate blog (this will print step updates)
             # Note: Streamlit updates UI at script completion, so steps will update
             # when print statements are captured and processed
             result = generator.generate(
                 topic=topic,
-                target_keywords=keywords
+                target_keywords=keywords or user_config.get('target_keywords', []),
+                custom_config=custom_config
             )
             
             # Mark all remaining steps as complete
