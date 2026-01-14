@@ -33,7 +33,7 @@ class HumanizerAgent(BaseAgent):
         
         content = input_data.get("content", {})
         tone = input_data.get("tone", "professional")
-        reading_level = input_data.get("reading_level", "college")
+        reading_level = input_data.get("reading_level", "business professional")
         
         humanized_content = {}
         improvements = []

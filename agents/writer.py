@@ -49,7 +49,7 @@ class WriterAgent(BaseAgent):
         fact_table = input_data.get("fact_table", {})
         citations = input_data.get("citations", [])
         tone = input_data.get("tone", "professional")
-        reading_level = input_data.get("reading_level", "college")
+        reading_level = input_data.get("reading_level", "business professional")
         section_goals = input_data.get("section_goals", {})
         
         content = {}

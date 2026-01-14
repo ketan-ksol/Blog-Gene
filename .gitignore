@@ -32,6 +32,10 @@ output/
 *.md
 !README.md
 
+# Database
+*.db
+data/*.db
+
 # IDE
 .vscode/
 .idea/
@@ -42,3 +46,9 @@ output/
 # OS
 .DS_Store
 Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.pytest_cache

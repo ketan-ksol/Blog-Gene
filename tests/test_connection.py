@@ -42,7 +42,7 @@ def test_connection():
         # Check SSL verification setting
         ssl_verify = os.getenv("SSL_VERIFY", "true").lower()
         llm_kwargs = {
-            "model": os.getenv("MODEL_NAME", "gpt-4o"),
+            "model": os.getenv("MODEL_NAME", "gpt-5"),
             "api_key": api_key,
             "timeout": 30
         }

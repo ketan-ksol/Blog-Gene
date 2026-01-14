@@ -2,17 +2,18 @@
 import streamlit as st
 import sys
 import os
-import time
-import threading
+import re
+import html
 from pathlib import Path
-from datetime import datetime
-import json
-import yaml
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from blog_generator import BlogGenerator
+from utils import get_default_config
+from database import get_database
+from admin import render_admin_page
+from auth import check_authentication, get_current_user, logout, is_admin
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,6 +25,53 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Check authentication
+if not check_authentication():
+    # Show login form in sidebar
+    with st.sidebar:
+        st.header("🔐 Authentication Required")
+        st.info("Please login to continue")
+        
+        with st.form("login_form_sidebar"):
+            username = st.text_input("Username", key="sidebar_username")
+            password = st.text_input("Password", type="password", key="sidebar_password")
+            login_button = st.form_submit_button("Login", type="primary", use_container_width=True)
+        
+        if login_button:
+            from auth import login
+            if login(username, password):
+                st.success("✅ Login successful!")
+                st.rerun()
+            else:
+                st.error("❌ Invalid username or password")
+    
+    # Show login message on main page
+    st.warning("🔒 Please login using the sidebar to access the Blog Generator")
+    st.stop()
+
+# User is authenticated - show navigation
+user = get_current_user()
+
+# Multi-page navigation
+nav_options = ["📝 Blog Generator"]
+if is_admin():
+    nav_options.append("⚙️ Admin")
+
+page = st.sidebar.selectbox(
+    "Navigation",
+    nav_options,
+    index=0
+)
+
+# Route to appropriate page
+if page == "⚙️ Admin":
+    render_admin_page()
+    st.stop()  # Stop execution here for admin page
+
+# Header (only shown on blog generator page)
+st.markdown('<h1 class="main-header">✍️ Enterprise Blog Generator</h1>', unsafe_allow_html=True)
+st.markdown('<p style="text-align: center; color: #666; font-size: 1.1rem;">AI-powered blog creation with agentic workflow</p>', unsafe_allow_html=True)
 
 # Custom CSS for better styling
 st.markdown("""
@@ -94,67 +142,49 @@ if 'step_messages' not in st.session_state:
 if 'user_config' not in st.session_state:
     st.session_state.user_config = None
 
-# Custom stream handler to capture print statements
-class StreamlitHandler:
-    def __init__(self, container):
-        self.container = container
-        self.messages = []
-    
-    def write(self, text):
-        if text.strip():
-            self.messages.append(text)
-            # Update the container with latest messages
-            with self.container:
-                for msg in self.messages[-20:]:  # Show last 20 messages
-                    if "Step" in msg or "✓" in msg or "⚠️" in msg or "🔍" in msg or "📷" in msg or "✅" in msg:
-                        st.text(msg)
-
-# Header
-st.markdown('<h1 class="main-header">✍️ Enterprise Blog Generator</h1>', unsafe_allow_html=True)
-st.markdown('<p style="text-align: center; color: #666; font-size: 1.1rem;">AI-powered blog creation with agentic workflow</p>', unsafe_allow_html=True)
-
 # Load configuration
 def load_config_values():
-    """Load configuration from config.yaml and environment variables."""
-    config_path = Path("config.yaml")
-    default_config = {
-        "tone": "professional",
-        "reading_level": "college",
-        "target_audience": "enterprise professionals",
-        "min_word_count": 1000,
-        "max_word_count": 1500,
-        "sections_per_article": 5,
-        "target_keywords": [],
-        "include_faq": True,
-        "include_meta_tags": True,
-        "require_citations": True,
-        "add_disclaimers": False,
-        "disclaimer_types": [],
-        "enable_web_search": True,
-        "max_research_sources": 10,
-        "fact_check_enabled": True,
-        "model_name": "gpt-4o",
-        "temperature": 0.7
-    }
+    """Load configuration from database only (single source of truth)."""
+    # Get defaults
+    default_config = get_default_config()
     
-    if config_path.exists():
-        try:
-            with open(config_path, "r") as f:
-                file_config = yaml.safe_load(f) or {}
-                default_config.update(file_config)
-        except Exception as e:
-            st.sidebar.warning(f"Could not load config.yaml: {e}")
+    # Load from database (single source of truth)
+    db = get_database()
     
-    # Override with environment variables if present
-    if os.getenv("MODEL_NAME"):
-        default_config["model_name"] = os.getenv("MODEL_NAME")
-    if os.getenv("TEMPERATURE"):
-        default_config["temperature"] = float(os.getenv("TEMPERATURE"))
+    # Get system settings from database
+    # Model and temperature are system settings
+    model_name = db.get_system_setting("model_name", "gpt-5")
+    temperature = db.get_system_setting("temperature", 0.7)
+    enable_web_search = db.get_system_setting("enable_web_search", True)
+    max_research_sources = db.get_system_setting("max_research_sources", 10)
+    min_word_count = db.get_system_setting("min_word_count", 500)
+    max_word_count = db.get_system_setting("max_word_count", 1000)
+    
+    # Add system settings to config
+    default_config.update({
+        "model_name": model_name,
+        "temperature": temperature,
+        "enable_web_search": enable_web_search,
+        "max_research_sources": max_research_sources,
+        "min_word_count": min_word_count,
+        "max_word_count": max_word_count
+    })
     
     return default_config
 
 # Sidebar for configuration
 with st.sidebar:
+    # Topic input - moved to top
+    st.header("📝 Blog Topic")
+    topic = st.text_input(
+        "Blog Topic",
+        placeholder="e.g., AI Evolution in 2025",
+        help="Enter the topic for your blog post",
+        label_visibility="collapsed"
+    )
+    
+    st.divider()
+    
     st.header("⚙️ Configuration")
     
     # Load default configuration values
@@ -162,7 +192,21 @@ with st.sidebar:
     
     # Initialize user config in session state if not present
     if st.session_state.user_config is None:
-        st.session_state.user_config = default_config.copy()
+        # Only include blog-related settings (word count is in admin, sections_per_article removed)
+        # Get word count from database system settings
+        db = get_database()
+        min_word_count = db.get_system_setting("min_word_count", 500)
+        max_word_count = db.get_system_setting("max_word_count", 1000)
+        
+        blog_config = {
+            "tone": default_config.get("tone", "professional"),
+            "reading_level": default_config.get("reading_level", "business professional"),
+            "target_audience": default_config.get("reading_level", "business professional"),  # Same as reading_level
+            "target_keywords": default_config.get("target_keywords", []),
+            "include_faq": default_config.get("include_faq", True),
+            "include_meta_tags": default_config.get("include_meta_tags", True),
+        }
+        st.session_state.user_config = blog_config
     
     # Get current config (use session state if available, otherwise defaults)
     config = st.session_state.user_config
@@ -175,43 +219,16 @@ with st.sidebar:
             index=["professional", "casual", "formal", "conversational", "technical"].index(config.get('tone', 'professional')) if config.get('tone', 'professional') in ["professional", "casual", "formal", "conversational", "technical"] else 0
         )
         reading_level = st.selectbox(
-            "Reading Level",
-            ["high school", "college", "graduate", "expert"],
-            index=["high school", "college", "graduate", "expert"].index(config.get('reading_level', 'college')) if config.get('reading_level', 'college') in ["high school", "college", "graduate", "expert"] else 1
-        )
-        target_audience = st.text_input(
-            "Target Audience",
-            value=config.get('target_audience', 'enterprise professionals')
-        )
-        min_word_count = st.number_input(
-            "Min Word Count",
-            min_value=500,
-            max_value=5000,
-            value=config.get('min_word_count', 1000),
-            step=100
-        )
-        max_word_count = st.number_input(
-            "Max Word Count",
-            min_value=1000,
-            max_value=10000,
-            value=config.get('max_word_count', 1500),
-            step=100
-        )
-        sections_per_article = st.number_input(
-            "Sections per Article",
-            min_value=3,
-            max_value=10,
-            value=config.get('sections_per_article', 5),
-            step=1
+            "Reading Level / Target Audience",
+            ["business professional", "technical professional", "executive", "expert"],
+            index=["business professional", "technical professional", "executive", "expert"].index(config.get('reading_level', 'business professional')) if config.get('reading_level', 'business professional') in ["business professional", "technical professional", "executive", "expert"] else 0,
+            help="Business Professional: General business audience. Technical Professional: Technical/engineering audience. Executive: C-level and senior leadership. Expert: Deep technical/domain expertise."
         )
         
-        # Update session state
+        # Update session state (reading_level is used as both reading level and target audience)
         st.session_state.user_config['tone'] = tone
         st.session_state.user_config['reading_level'] = reading_level
-        st.session_state.user_config['target_audience'] = target_audience
-        st.session_state.user_config['min_word_count'] = min_word_count
-        st.session_state.user_config['max_word_count'] = max_word_count
-        st.session_state.user_config['sections_per_article'] = sections_per_article
+        st.session_state.user_config['target_audience'] = reading_level  # Same as reading level
     
     with st.expander("🔍 SEO Settings", expanded=False):
         include_faq = st.checkbox(
@@ -223,9 +240,10 @@ with st.sidebar:
             value=config.get('include_meta_tags', True)
         )
         target_keywords_str = st.text_input(
-            "Target Keywords",
+            "SEO Keywords",
             value=', '.join(config.get('target_keywords', [])) if isinstance(config.get('target_keywords', []), list) else str(config.get('target_keywords', '')),
-            help="Comma-separated keywords for SEO"
+            placeholder="keyword1, keyword2, keyword3",
+            help="Comma-separated keywords for SEO optimization (optional)"
         )
         
         # Update session state
@@ -236,97 +254,44 @@ with st.sidebar:
         else:
             st.session_state.user_config['target_keywords'] = []
     
-    with st.expander("🤖 Model Settings", expanded=False):
-        model_name = st.selectbox(
-            "Model Name",
-            ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"],
-            index=["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"].index(config.get('model_name', 'gpt-4o')) if config.get('model_name', 'gpt-4o') in ["gpt-4o", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo"] else 0
-        )
-        temperature = st.slider(
-            "Temperature",
-            min_value=0.0,
-            max_value=2.0,
-            value=float(config.get('temperature', 0.7)),
-            step=0.1,
-            help="Higher values make output more creative, lower values more focused"
-        )
-        
-        # Update session state
-        st.session_state.user_config['model_name'] = model_name
-        st.session_state.user_config['temperature'] = temperature
-    
-    with st.expander("🔒 Safety & Compliance", expanded=False):
-        require_citations = st.checkbox(
-            "Require Citations",
-            value=config.get('require_citations', True)
-        )
-        add_disclaimers = st.checkbox(
-            "Add Disclaimers",
-            value=config.get('add_disclaimers', False)
-        )
-        disclaimer_types_str = st.text_input(
-            "Disclaimer Types",
-            value=', '.join(config.get('disclaimer_types', [])) if isinstance(config.get('disclaimer_types', []), list) else str(config.get('disclaimer_types', '')),
-            help="Comma-separated disclaimer types (e.g., medical, financial, legal)"
-        )
-        
-        # Update session state
-        st.session_state.user_config['require_citations'] = require_citations
-        st.session_state.user_config['add_disclaimers'] = add_disclaimers
-        if disclaimer_types_str:
-            st.session_state.user_config['disclaimer_types'] = [d.strip() for d in disclaimer_types_str.split(',') if d.strip()]
-        else:
-            st.session_state.user_config['disclaimer_types'] = []
-    
-    with st.expander("🔬 Agent Settings", expanded=False):
-        enable_web_search = st.checkbox(
-            "Enable Web Search",
-            value=config.get('enable_web_search', True)
-        )
-        max_research_sources = st.number_input(
-            "Max Research Sources",
-            min_value=1,
-            max_value=50,
-            value=config.get('max_research_sources', 10),
-            step=1
-        )
-        fact_check_enabled = st.checkbox(
-            "Fact Check Enabled",
-            value=config.get('fact_check_enabled', True)
-        )
-        
-        # Update session state
-        st.session_state.user_config['enable_web_search'] = enable_web_search
-        st.session_state.user_config['max_research_sources'] = max_research_sources
-        st.session_state.user_config['fact_check_enabled'] = fact_check_enabled
-    
-    # Reset to defaults button
-    if st.button("🔄 Reset to Defaults", use_container_width=True):
-        st.session_state.user_config = default_config.copy()
-        st.rerun()
-    
     st.divider()
     
-    # Topic input
-    topic = st.text_input(
-        "Blog Topic",
-        placeholder="e.g., AI Evolution in 2025",
-        help="Enter the topic for your blog post"
-    )
+    # Display Admin Settings (read-only for all users)
+    with st.expander("⚙️ System Settings", expanded=False):
+        db = get_database()
+        
+        # Model Settings
+        st.markdown("#### 🤖 Model")
+        model_name = db.get_system_setting("model_name", "gpt-5")
+        temperature = db.get_system_setting("temperature", 0.7)
+        st.text(f"Model: {model_name}")
+        st.text(f"Temperature: {temperature}")
+        
+        # Agent Settings
+        st.markdown("#### 🔬 Agent")
+        enable_web_search = db.get_system_setting("enable_web_search", True)
+        max_research_sources = db.get_system_setting("max_research_sources", 10)
+        min_word_count = db.get_system_setting("min_word_count", 500)
+        max_word_count = db.get_system_setting("max_word_count", 1000)
+        
+        st.text(f"Web Search: {'✅ Enabled' if enable_web_search else '❌ Disabled'}")
+        st.text(f"Max Sources: {max_research_sources}")
+        st.text(f"Word Count: {min_word_count} - {max_word_count}")
+        
+        if is_admin():
+            st.caption("💡 Edit settings in Admin page")
     
-    # Optional keywords
-    keywords_input = st.text_input(
-        "SEO Keywords (optional)",
-        placeholder="keyword1, keyword2, keyword3",
-        help="Comma-separated keywords for SEO optimization"
-    )
-    
-    keywords = [k.strip() for k in keywords_input.split(",") if k.strip()] if keywords_input else None
+    st.divider()
     
     # Generate button
     generate_button = st.button("🚀 Generate Blog", type="primary", use_container_width=True)
     
     st.divider()
+    
+    # Logout button at bottom of sidebar
+    if st.button("🚪 Logout", use_container_width=True, key="sidebar_logout"):
+        logout()
+        st.rerun()
     
     # Display current status
     if st.session_state.current_step:
@@ -340,9 +305,15 @@ if generate_button and topic:
     # Get user configuration
     user_config = st.session_state.user_config if st.session_state.user_config else load_config_values()
     
-    # Set environment variables for model settings (agents read from env)
-    os.environ["MODEL_NAME"] = user_config.get('model_name', 'gpt-4o')
-    os.environ["TEMPERATURE"] = str(user_config.get('temperature', 0.7))
+    # Get model settings from database (not from env - env is only for credentials)
+    db = get_database()
+    model_name = db.get_system_setting("model_name", "gpt-5")
+    temperature = db.get_system_setting("temperature", 0.7)
+    
+    # Temporarily set in env for agents (they read from env currently)
+    # TODO: Refactor agents to read from database directly
+    os.environ["MODEL_NAME"] = model_name
+    os.environ["TEMPERATURE"] = str(temperature)
     
     # Initialize generator
     with st.spinner("Initializing blog generator..."):
@@ -394,9 +365,6 @@ if generate_button and topic:
     
     # Generate blog with real-time updates
     try:
-        import sys
-        import re
-        from io import StringIO
         
         # Track current step - use a list to allow modification in nested function
         step_state = {"current": -1, "completed": set()}
@@ -427,7 +395,6 @@ if generate_button and topic:
         
         def _update_step_with_thoughts(step_idx: int):
             """Update step display to include AI thoughts."""
-            import html
             step_name, icon, step_label = steps[step_idx]
             thoughts_html = ""
             if step_idx in step_thoughts and step_thoughts[step_idx]:
@@ -512,7 +479,6 @@ if generate_button and topic:
             
             def _update_steps(self):
                 """Update all step displays based on current state"""
-                import html
                 for i, (step_name, icon, step_label) in enumerate(self.steps):
                     # Get thoughts for this step
                     thoughts_html = ""
@@ -552,8 +518,7 @@ if generate_button and topic:
             def flush(self):
                 pass
         
-        # Set up thought callback before generation
-        from agents.base import set_thought_callback
+        # Set up thought callback before generation (already imported above)
         set_thought_callback(capture_thought)
         
         # Redirect stdout to capture print statements
@@ -562,22 +527,28 @@ if generate_button and topic:
         sys.stdout = stream_capture
         
         try:
-            # Prepare custom config (exclude model_name and temperature as they're set via env)
+            # Prepare custom config (blog settings + system settings, exclude model_name and temperature as they're set via env)
+            # Get system settings from database (single source of truth)
+            db = get_database()
+            min_word_count = db.get_system_setting("min_word_count", 500)
+            max_word_count = db.get_system_setting("max_word_count", 1000)
+            enable_web_search = db.get_system_setting("enable_web_search", True)
+            max_research_sources = db.get_system_setting("max_research_sources", 10)
+            
             custom_config = {
+                # Blog settings
                 'tone': user_config.get('tone'),
                 'reading_level': user_config.get('reading_level'),
-                'target_audience': user_config.get('target_audience'),
-                'min_word_count': user_config.get('min_word_count'),
-                'max_word_count': user_config.get('max_word_count'),
-                'sections_per_article': user_config.get('sections_per_article'),
+                'target_audience': user_config.get('reading_level'),  # Same as reading_level
+                'min_word_count': min_word_count,
+                'max_word_count': max_word_count,
+                # Note: sections_per_article removed - agent decides based on topic
                 'include_faq': user_config.get('include_faq'),
                 'include_meta_tags': user_config.get('include_meta_tags'),
-                'require_citations': user_config.get('require_citations'),
-                'add_disclaimers': user_config.get('add_disclaimers'),
-                'disclaimer_types': user_config.get('disclaimer_types'),
-                'enable_web_search': user_config.get('enable_web_search'),
-                'max_research_sources': user_config.get('max_research_sources'),
-                'fact_check_enabled': user_config.get('fact_check_enabled')
+                # System settings from database (single source of truth)
+                'enable_web_search': enable_web_search,
+                'max_research_sources': max_research_sources
+                # Note: fact-checking is always enabled, citations always required, disclaimers never added
             }
             
             # Generate blog (this will print step updates)
@@ -585,7 +556,7 @@ if generate_button and topic:
             # when print statements are captured and processed
             result = generator.generate(
                 topic=topic,
-                target_keywords=keywords or user_config.get('target_keywords', []),
+                target_keywords=user_config.get('target_keywords', []),
                 custom_config=custom_config
             )
             
@@ -606,12 +577,24 @@ if generate_button and topic:
             # Clear thought callback after generation
             set_thought_callback(None)
         
-        # Update final progress
-        progress_bar.progress(1.0)
-        status_text.text("✅ Blog generation complete!")
-        
         # Store result
         st.session_state.blog_result = result
+        
+        # Save to database history
+        if result.get("status") == "success":
+            try:
+                db = get_database()
+                user = get_current_user()
+                user_id = user.get("id") if user else None
+                db.save_blog_history(
+                    topic=topic,
+                    output_file=result.get("output_file", ""),
+                    metadata=result.get("metadata", {}),
+                    config_used=user_config,
+                    user_id=user_id
+                )
+            except Exception as e:
+                st.warning(f"Could not save to history: {str(e)}")
         
         # Display result
         with result_container:

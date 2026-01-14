@@ -25,8 +25,25 @@ class BaseAgent(ABC):
     
     def __init__(self, model_name: Optional[str] = None, temperature: Optional[float] = None):
         """Initialize the base agent with LLM configuration."""
-        self.model_name = model_name or os.getenv("MODEL_NAME", "gpt-4o")
-        self.temperature = temperature or float(os.getenv("TEMPERATURE", "0.7"))
+        # Model settings should always be provided by BlogGenerator (which reads from database)
+        # Fallback to database lookup only if not provided (for backward compatibility)
+        if model_name is None:
+            try:
+                from database import get_database
+                db = get_database()
+                model_name = db.get_system_setting("model_name", "gpt-5")
+            except:
+                model_name = "gpt-5"  # Ultimate fallback
+        if temperature is None:
+            try:
+                from database import get_database
+                db = get_database()
+                temperature = db.get_system_setting("temperature", 0.7)
+            except:
+                temperature = 0.7  # Ultimate fallback
+        
+        self.model_name = model_name
+        self.temperature = temperature
         api_key = os.getenv("OPENAI_API_KEY")
         self.agent_name = self.__class__.__name__.replace("Agent", "")
         

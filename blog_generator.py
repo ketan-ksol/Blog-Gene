@@ -1,7 +1,6 @@
 """Main blog generation orchestration system."""
 import os
 import json
-import yaml
 from typing import Dict, Any, Optional
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +15,14 @@ from agents import (
     SEOAgent,
     FactCheckAgent
 )
+from utils import (
+    get_default_config,
+    clean_markdown_for_word_count,
+    sanitize_topic,
+    extract_images_from_markdown,
+    remove_duplicate_headers
+)
+from database import get_database
 
 load_dotenv()
 
@@ -23,15 +30,28 @@ load_dotenv()
 class BlogGenerator:
     """Main orchestrator for the blog generation pipeline."""
     
-    def __init__(self, config_path: Optional[str] = None):
-        """Initialize the blog generator with configuration."""
-        self.config = self._load_config(config_path)
+    def __init__(self):
+        """Initialize the blog generator with configuration from database."""
+        # Get configuration from database (single source of truth)
+        db = get_database()
+        
+        # Get defaults
+        self.config = get_default_config()
+        
+        # Load system settings from database
+        self.config["model_name"] = db.get_system_setting("model_name", "gpt-5")
+        self.config["temperature"] = db.get_system_setting("temperature", 0.7)
+        self.config["enable_web_search"] = db.get_system_setting("enable_web_search", True)
+        self.config["max_research_sources"] = db.get_system_setting("max_research_sources", 10)
+        self.config["min_word_count"] = db.get_system_setting("min_word_count", 500)
+        self.config["max_word_count"] = db.get_system_setting("max_word_count", 1000)
+        
         self.output_dir = Path(os.getenv("OUTPUT_DIR", "./output"))
         self.output_dir.mkdir(exist_ok=True)
         
-        # Initialize agents
-        model_name = os.getenv("MODEL_NAME", "gpt-4o")
-        temperature = float(os.getenv("TEMPERATURE", "0.7"))
+        # Initialize agents with settings from database
+        model_name = self.config["model_name"]
+        temperature = self.config["temperature"]
         
         self.planner = PlannerAgent(model_name=model_name, temperature=temperature)
         self.research = ResearchAgent(model_name=model_name, temperature=temperature)
@@ -41,38 +61,40 @@ class BlogGenerator:
         self.seo = SEOAgent(model_name=model_name, temperature=temperature)
         self.fact_check = FactCheckAgent(model_name=model_name, temperature=temperature)
     
-    def _load_config(self, config_path: Optional[str]) -> Dict[str, Any]:
-        """Load configuration from YAML file."""
-        if config_path is None:
-            config_path = "config.yaml"
+    def _run_agent_step(self, agent, step_name: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Run an agent step with error handling.
         
-        default_config = {
-            "tone": "professional",
-            "reading_level": "college",
-            "target_audience": "enterprise professionals",
-            "min_word_count": 1500,
-            "max_word_count": 3000,
-            "sections_per_article": 5,
-            "target_keywords": [],
-            "include_faq": True,
-            "include_meta_tags": True,
-            "require_citations": True,
-            "add_disclaimers": False,
-            "disclaimer_types": [],
-            "enable_web_search": True,
-            "max_research_sources": 10,
-            "fact_check_enabled": True
-        }
+        Args:
+            agent: Agent instance to run
+            step_name: Name of the step for error messages
+            input_data: Input data for the agent
         
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, "r") as f:
-                    file_config = yaml.safe_load(f) or {}
-                default_config.update(file_config)
-            except Exception as e:
-                print(f"Warning: Could not load config file: {e}")
-        
-        return default_config
+        Returns:
+            Result dictionary with status and data, or error status
+        """
+        try:
+            result = agent.process(input_data)
+            if result.get("status") != "success":
+                error_msg = result.get("message", "Unknown error")
+                return {
+                    "status": "error",
+                    "message": f"{step_name.capitalize()} failed: {error_msg}",
+                    "step": step_name
+                }
+            return result
+        except Exception as e:
+            error_msg = str(e)
+            if "Connection" in error_msg or "connection" in error_msg:
+                return {
+                    "status": "error",
+                    "message": f"Connection error during {step_name}: {error_msg}. Please check your internet connection and OpenAI API key.",
+                    "step": step_name
+                }
+            return {
+                "status": "error",
+                "message": f"{step_name.capitalize()} failed: {error_msg}",
+                "step": step_name
+            }
     
     def generate(
         self,
@@ -93,42 +115,47 @@ class BlogGenerator:
         """
         print(f"\n🚀 Starting blog generation for: {topic}\n")
         
-        # Merge custom config
+        # Always reload system settings from database (single source of truth)
+        db = get_database()
+        system_settings = {
+            "model_name": db.get_system_setting("model_name", "gpt-5"),
+            "temperature": db.get_system_setting("temperature", 0.7),
+            "enable_web_search": db.get_system_setting("enable_web_search", True),
+            "max_research_sources": db.get_system_setting("max_research_sources", 10),
+            "min_word_count": db.get_system_setting("min_word_count", 500),
+            "max_word_count": db.get_system_setting("max_word_count", 1000),
+        }
+        
+        # Merge custom config, but ensure system settings from DB are not overridden by None
         config = {**self.config}
+        # First, ensure system settings are always from DB
+        config.update(system_settings)
+        # Then apply custom_config, but only non-None values to prevent None from overriding DB values
         if custom_config:
-            config.update(custom_config)
+            for key, value in custom_config.items():
+                if value is not None:
+                    config[key] = value
+            # Re-apply system settings after custom_config merge to ensure DB values are never None
+            # This ensures that even if custom_config had None for a system setting, DB value is used
+            for key in system_settings:
+                if config.get(key) is None:
+                    config[key] = system_settings[key]
         
         # Step 1: Planning
         print("📋 Step 1/7: Planning blog structure...")
-        try:
-            plan_result = self.planner.process({
+        plan_result = self._run_agent_step(
+            agent=self.planner,
+            step_name="planner",
+            input_data={
                 "topic": topic,
-                "target_audience": config.get("target_audience"),
+                "target_audience": config.get("target_audience") or config.get("reading_level", "business professional"),
                 "tone": config.get("tone"),
-                "word_count": config.get("max_word_count", 2000),
-                "sections_per_article": config.get("sections_per_article", 5)
-            })
-        except Exception as e:
-            error_msg = str(e)
-            if "Connection" in error_msg or "connection" in error_msg:
-                return {
-                    "status": "error",
-                    "message": f"Connection error during planning: {error_msg}. Please check your internet connection and OpenAI API key.",
-                    "step": "planner"
-                }
-            return {
-                "status": "error",
-                "message": f"Planning failed: {error_msg}",
-                "step": "planner"
+                "word_count": config.get("max_word_count", 1000)
+                # Note: sections_per_article removed - agent decides based on topic
             }
-        
-        if plan_result.get("status") != "success":
-            error_msg = plan_result.get("message", "Unknown error")
-            return {
-                "status": "error",
-                "message": f"Planning failed: {error_msg}",
-                "step": "planner"
-            }
+        )
+        if plan_result.get("status") == "error":
+            return plan_result
         
         plan = plan_result["plan"]
         print(f"✓ Created outline with {len(plan.get('outline', []))} sections\n")
@@ -224,36 +251,26 @@ class BlogGenerator:
         
         print(f"✓ SEO optimization complete. Keyword density: {seo_result.get('keyword_density', {})}\n")
         
-        # Step 7: Fact-checking & Safety (only if enabled)
-        fact_check_result = None
-        if config.get("fact_check_enabled", True):
-            print("✅ Step 7/7: Fact-checking and safety review...")
-            fact_check_result = self.fact_check.process({
+        # Step 7: Fact-checking & Safety (always enabled)
+        print("✅ Step 7/7: Fact-checking and safety review...")
+        fact_check_result = self._run_agent_step(
+            agent=self.fact_check,
+            step_name="fact_check",
+            input_data={
                 "content": seo_result.get("optimized_content", {}),
                 "fact_table": research_result.get("fact_table", {}),
                 "citations": research_result.get("citations", []),
-                "require_citations": config.get("require_citations", True),
-                "add_disclaimers": config.get("add_disclaimers", False),
-                "disclaimer_types": config.get("disclaimer_types", []),
+                "require_citations": True,  # Always require citations
+                "add_disclaimers": False,  # Never add disclaimers
+                "disclaimer_types": [],  # No disclaimers
                 "topic": topic
-            })
-            
-            if fact_check_result.get("status") != "success":
-                return {"status": "error", "message": "Fact-checking failed", "step": "fact_check"}
-            
-            verification_score = fact_check_result.get("verification_score", 0)
-            print(f"✓ Fact-checking complete. Verification score: {verification_score:.2%}\n")
-        else:
-            print("⏭️  Step 7/7: Fact-checking skipped (disabled in configuration)\n")
-            # Use SEO result as final content if fact-checking is disabled
-            fact_check_result = {
-                "status": "success",
-                "verified_content": seo_result.get("optimized_content", {}),
-                "flagged_claims": [],
-                "disclaimers": "",
-                "citation_status": {},
-                "verification_score": 0.0
             }
+        )
+        if fact_check_result.get("status") == "error":
+            return fact_check_result
+        
+        verification_score = fact_check_result.get("verification_score", 0)
+        print(f"✓ Fact-checking complete. Verification score: {verification_score:.2%}\n")
         
         # Compile final blog
         final_blog = self._compile_final_blog(
@@ -272,27 +289,14 @@ class BlogGenerator:
         
         # Calculate word count excluding references and FAQ
         content_word_count = 0
+        exclude_sections = ["References", "FAQ", "Disclaimer"]
         for section in final_blog.get("sections", []):
             section_title = section.get("title", "")
             section_content = section.get("content", "")
             # Skip References, FAQ, and Disclaimer sections from word count
-            if section_title not in ["References", "FAQ", "Disclaimer"]:
-                # Remove markdown image syntax and URLs, but keep the text content
-                import re
-                # Remove markdown images: ![alt](url)
-                section_content = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', section_content)
-                # Remove URLs (http/https)
-                section_content = re.sub(r'https?://\S+', '', section_content)
-                # Remove markdown links but keep the text: [text](url) -> text
-                section_content = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', section_content)
-                # Remove HTML comments
-                section_content = re.sub(r'<!--.*?-->', '', section_content, flags=re.DOTALL)
-                # Remove markdown code blocks
-                section_content = re.sub(r'```[\s\S]*?```', '', section_content)
-                # Remove inline code but keep the text
-                section_content = re.sub(r'`([^`]+)`', r'\1', section_content)
-                # Count words (split by whitespace and filter empty strings)
-                words = [w.strip() for w in section_content.split() if w.strip()]
+            if section_title not in exclude_sections:
+                cleaned_content = clean_markdown_for_word_count(section_content)
+                words = [w.strip() for w in cleaned_content.split() if w.strip()]
                 content_word_count += len(words)
         
         return {
@@ -326,16 +330,10 @@ class BlogGenerator:
             })
         
         # Extract image URLs and descriptions from sections for easy access in JSON
-        import re
         images = []
         for section in sections:
             content = section.get("content", "")
-            # Extract image URLs from markdown image syntax
-            for match in re.findall(r"!\[[^\]]*\]\(([^)]+)\)", content):
-                images.append({"url": match, "type": "url"})
-            # Extract image descriptions from comments (when no URL found)
-            for match in re.findall(r"<!-- Image needed: ([^>]+) -->", content):
-                images.append({"description": match, "type": "description"})
+            images.extend(extract_images_from_markdown(content))
         
         # Add FAQ if generated
         if seo_data.get("faq_section"):
@@ -375,8 +373,7 @@ class BlogGenerator:
     def _save_blog(self, blog: Dict[str, Any], topic: str) -> Path:
         """Save the blog to a markdown file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_topic = "".join(c if c.isalnum() or c in (' ', '-', '_') else '' for c in topic)
-        safe_topic = safe_topic.replace(' ', '_')[:50]
+        safe_topic = sanitize_topic(topic)
         filename = f"{safe_topic}_{timestamp}.md"
         filepath = self.output_dir / filename
         
@@ -418,24 +415,7 @@ class BlogGenerator:
                 continue
             
             # Remove duplicate headers from content
-            content_lines = content.split("\n")
-            cleaned_content = []
-            last_was_header = False
-            
-            for line in content_lines:
-                # If this line is the same header as the section title, skip it
-                if line.strip() == f"## {title}":
-                    continue
-                # Remove consecutive duplicate headers
-                if line.startswith("## "):
-                    if last_was_header:
-                        continue
-                    last_was_header = True
-                else:
-                    last_was_header = False
-                cleaned_content.append(line)
-            
-            content = "\n".join(cleaned_content).strip()
+            content = remove_duplicate_headers(content, title)
             
             # Only add section if it has content
             if content:

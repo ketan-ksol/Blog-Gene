@@ -26,14 +26,24 @@ class PlannerAgent(BaseAgent):
             - search_queries: list
         """
         topic = input_data.get("topic", "")
-        target_audience = input_data.get("target_audience", "enterprise professionals")
+        target_audience = input_data.get("target_audience", "business professional")
         tone = input_data.get("tone", "professional")
-        word_count = input_data.get("word_count", 2000)
-        sections_per_article = input_data.get("sections_per_article", 5)
+        word_count = input_data.get("word_count", 1000)
         
-        # Calculate section range based on sections_per_article
-        min_sections = max(3, sections_per_article - 1)
-        max_sections = sections_per_article + 2
+        # Agent decides number of sections based on topic complexity and word count
+        # More complex topics or longer articles get more sections
+        if word_count <= 600:
+            min_sections = 3
+            max_sections = 4
+            target_sections = 3
+        elif word_count <= 800:
+            min_sections = 4
+            max_sections = 5
+            target_sections = 4
+        else:  # 800-1000 words
+            min_sections = 5
+            max_sections = 6
+            target_sections = 5
         
         prompt = f"""You are an expert content strategist creating a comprehensive blog plan for an enterprise audience.
 
@@ -47,15 +57,18 @@ Topic: {topic}
 Target Audience: {target_audience}
 Tone: {tone} (with marketing focus - informative yet solution-oriented)
 Target Word Count: {word_count}
-Target Number of Sections: {sections_per_article}
 
-IMPORTANT: Focus specifically on {topic}. Create a plan that addresses {topic} directly, not general information about the broader subject area. Include marketing angles that position challenges as opportunities for improvement and solutions.
+IMPORTANT: 
+- Focus specifically on {topic}. Create a plan that addresses {topic} directly, not general information about the broader subject area.
+- Include marketing angles that position challenges as opportunities for improvement and solutions.
+- Determine the optimal number of sections ({min_sections}-{max_sections} sections, target: {target_sections}) based on the topic's complexity and depth required.
+- For simple topics, use fewer sections. For complex topics requiring detailed explanation, use more sections.
 
 Create a detailed blog plan with the following structure:
 
 1. **Angle**: A unique perspective or approach to the topic that will engage the audience
 2. **Thesis**: The main argument or key message of the blog post
-3. **Outline**: A structured outline with {min_sections}-{max_sections} sections (target: {sections_per_article} sections), each with:
+3. **Outline**: A structured outline with {min_sections}-{max_sections} sections (target: {target_sections} sections), each with:
    - Section title (H2)
    - Subsection titles (H3) if needed
    - Brief description of what should be covered
@@ -115,11 +128,10 @@ Return your response as a JSON object with this exact structure:
         
         # Try to extract JSON from response
         try:
-            # Remove markdown code blocks if present
-            if "```json" in response:
-                response = response.split("```json")[1].split("```")[0].strip()
-            elif "```" in response:
-                response = response.split("```")[1].split("```")[0].strip()
+            from utils import extract_json_from_markdown
+            extracted_json = extract_json_from_markdown(response)
+            if extracted_json:
+                response = extracted_json
             
             plan = json.loads(response)
             
