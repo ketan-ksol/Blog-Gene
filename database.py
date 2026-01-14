@@ -5,6 +5,9 @@ import os
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pathlib import Path
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class BlogDatabase:
@@ -28,7 +31,7 @@ class BlogDatabase:
             try:
                 db_dir.mkdir(parents=True, exist_ok=True)
             except Exception as e:
-                print(f"Warning: Could not create database directory {db_dir}: {e}")
+                logger.warning(f"Could not create database directory {db_dir}: {e}")
         
         # If db_path is just a filename, use current directory
         if not Path(self.db_path).parent or Path(self.db_path).parent == Path('.'):

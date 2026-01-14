@@ -260,7 +260,14 @@ docker-compose up -d
 
 **View logs:**
 ```bash
+# View all logs (follow mode)
 docker-compose logs -f app
+
+# View only errors/warnings
+docker-compose logs app | grep -E "(WARNING|ERROR|CRITICAL)"
+
+# View with timestamps
+docker-compose logs -f -t app
 ```
 
 **Stop the application:**
@@ -294,8 +301,30 @@ Environment variables are only for **credentials and infrastructure settings**:
 - `SSL_VERIFY`: SSL verification (default: `true`)
 - `OUTPUT_DIR`: Output directory (default: `./output`)
 - `DB_PATH`: Database file path (default: `./data/blog_generator.db`)
+- `LOG_LEVEL`: Logging level - DEBUG, INFO, WARNING, ERROR, CRITICAL (default: `INFO`)
+- `ENABLE_FILE_LOGGING`: Enable file logging (default: `false`)
+- `LOG_FILE_PATH`: Path to log file if file logging enabled (default: `./logs/blog_generator.log`)
 
 **Note**: All configuration (model, temperature, word count, etc.) is managed through the **Admin panel** in the web interface and stored in the database. This provides a single source of truth for all settings.
+
+### Logging
+
+All application logs are visible in Docker containers via stdout/stderr. The logging system provides:
+
+- **Automatic log level configuration** via `LOG_LEVEL` environment variable
+- **Structured logging** with timestamps, module names, and log levels
+- **Docker-friendly output** - all logs go to stdout/stderr for container visibility
+- **Optional file logging** for persistent log storage
+
+**Log Levels:**
+- `DEBUG`: Detailed debugging information (API calls, intermediate states)
+- `INFO`: General flow information (step progress, completion messages)
+- `WARNING`: Non-critical issues (retries, fallbacks, missing optional configs)
+- `ERROR`: Failures with stack traces (agent step failures, exceptions)
+- `CRITICAL`: Fatal errors that stop execution
+
+**Viewing Logs:**
+See the [Docker Commands](#docker-commands) section for log viewing commands.
 
 ### Docker Troubleshooting
 
@@ -314,7 +343,14 @@ chmod 666 blog_generator.db
 
 **View application logs:**
 ```bash
+# View all logs (follow mode)
 docker-compose logs -f app
+
+# View only errors/warnings
+docker-compose logs app | grep -E "(WARNING|ERROR|CRITICAL)"
+
+# View with timestamps
+docker-compose logs -f -t app
 ```
 
 ### Production Deployment

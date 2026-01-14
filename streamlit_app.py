@@ -9,6 +9,10 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Initialize logging early (before other imports that might use logging)
+from utils.logger import setup_logging
+setup_logging()
+
 from blog_generator import BlogGenerator
 from utils import get_default_config
 from database import get_database
@@ -420,16 +424,22 @@ if generate_button and topic:
         
         # Create a custom stream to capture print statements
         class StreamlitStream:
-            def __init__(self, step_state_ref, step_placeholders_ref, steps_ref, progress_bar_ref, status_text_ref):
+            def __init__(self, step_state_ref, step_placeholders_ref, steps_ref, progress_bar_ref, status_text_ref, original_stdout):
                 self.buffer = []
                 self.step_state = step_state_ref
                 self.step_placeholders = step_placeholders_ref
                 self.steps = steps_ref
                 self.progress_bar = progress_bar_ref
                 self.status_text = status_text_ref
+                self.original_stdout = original_stdout  # Keep reference to original stdout for Docker
             
             def write(self, text):
                 try:
+                    # Always write to original stdout first (for Docker visibility)
+                    if self.original_stdout:
+                        self.original_stdout.write(text)
+                        self.original_stdout.flush()
+                    
                     # Convert bytes to string if needed
                     if isinstance(text, bytes):
                         text = text.decode('utf-8', errors='ignore')
@@ -449,6 +459,8 @@ if generate_button and topic:
                     if not isinstance(text, str):
                         return
                     try:
+                        # Match "Step X/7" pattern even if it's in a formatted log message
+                        # This handles both: "Step 1/7" and "2024-01-15 ... INFO - Step 1/7"
                         step_match = re.search(r'Step (\d+)/7', text)
                     except (TypeError, AttributeError):
                         return
@@ -521,10 +533,18 @@ if generate_button and topic:
         # Set up thought callback before generation (already imported above)
         set_thought_callback(capture_thought)
         
-        # Redirect stdout to capture print statements
+        # Redirect stdout to capture print statements and log messages
         old_stdout = sys.stdout
-        stream_capture = StreamlitStream(step_state, step_placeholders, steps, progress_bar, status_text)
+        stream_capture = StreamlitStream(step_state, step_placeholders, steps, progress_bar, status_text, old_stdout)
         sys.stdout = stream_capture
+        
+        # Reconfigure logging handlers to use the redirected stdout
+        # This ensures logger messages are captured by StreamlitStream
+        import logging
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging.StreamHandler) and handler.stream == old_stdout:
+                handler.stream = stream_capture
         
         try:
             # Prepare custom config (blog settings + system settings, exclude model_name and temperature as they're set via env)

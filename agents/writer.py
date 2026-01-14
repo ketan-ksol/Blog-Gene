@@ -5,11 +5,15 @@ import os
 import requests
 from urllib.parse import quote, urljoin, urlparse
 import urllib3
+from utils.logger import get_logger
+
 try:
     from bs4 import BeautifulSoup
     BS4_AVAILABLE = True
 except ImportError:
     BS4_AVAILABLE = False
+
+logger = get_logger(__name__)
 
 
 class WriterAgent(BaseAgent):
@@ -118,7 +122,7 @@ class WriterAgent(BaseAgent):
                     time.sleep(0.2)
             else:
                 # Retry if content is too short
-                print(f"⚠️  Section '{section_title}' has insufficient content. Retrying...")
+                logger.warning(f"⚠️  Section '{section_title}' has insufficient content. Retrying...")
                 section_content = self._write_section(
                     section_title=section_title,
                     description=section_desc,
@@ -137,7 +141,7 @@ class WriterAgent(BaseAgent):
                     content[section_title] = section_content
                     total_word_count += len(section_content.split())
                 else:
-                    print(f"⚠️  Warning: Section '{section_title}' still has minimal content")
+                    logger.warning(f"⚠️  Warning: Section '{section_title}' still has minimal content")
                     content[section_title] = section_content or f"Content for {section_title} is being generated..."
         
         # Write conclusion
@@ -162,7 +166,7 @@ class WriterAgent(BaseAgent):
         # Check if we need to adjust content to meet word count requirements
         if total_word_count < min_word_count:
             # Need more content - expand sections
-            print(f"⚠️  Word count ({total_word_count}) below minimum ({min_word_count}). Expanding content...")
+            logger.warning(f"⚠️  Word count ({total_word_count}) below minimum ({min_word_count}). Expanding content...")
             for section_title in list(content.keys()):
                 if section_title not in ["Introduction", "Conclusion"]:
                     current_words = len(content[section_title].split())
@@ -600,7 +604,7 @@ Write the expanded content, maintaining ALL existing content and adding substant
                     break
         
         if images_added > 0:
-            print(f"📷 Added {images_added} image(s) to relevant sections")
+            logger.info(f"📷 Added {images_added} image(s) to relevant sections")
         
         return enhanced_content
     
@@ -665,21 +669,21 @@ Write the expanded content, maintaining ALL existing content and adding substant
             if not url or not url.startswith(('http://', 'https://')):
                 continue
             
-            print(f"      📄 Citation {i}/{min(5, len(citations))}: {title[:60]}...")
-            print(f"         URL: {url[:80]}...")
-            print(f"         🔍 Fetching webpage to extract images...")
+            logger.debug(f"      📄 Citation {i}/{min(5, len(citations))}: {title[:60]}...")
+            logger.debug(f"         URL: {url[:80]}...")
+            logger.debug(f"         🔍 Fetching webpage to extract images...")
             
             # Fetch all candidate images from this webpage
             candidates = self._fetch_images_from_webpage(url, section_title, topic, section_content, image_description)
             
             if candidates:
-                print(f"         ✅ Found {len(candidates)} candidate image(s) on this page")
+                logger.debug(f"         ✅ Found {len(candidates)} candidate image(s) on this page")
                 all_candidate_images.extend(candidates)
             else:
-                print(f"         ℹ️  No suitable images found on this page")
+                logger.debug(f"         ℹ️  No suitable images found on this page")
         
         if not all_candidate_images:
-            print(f"      ℹ️  No image URLs found in any citations")
+            logger.debug(f"      ℹ️  No image URLs found in any citations")
             return None
         
         # Sort all candidates from all citations by relevance score
@@ -690,20 +694,20 @@ Write the expanded content, maintaining ALL existing content and adding substant
         
         if not relevant_images:
             best_score = all_candidate_images[0]['relevance'] if all_candidate_images else 0
-            print(f"      ⚠️  No images met minimum relevance threshold (5.0) across all citations. Best score: {best_score:.2f}")
+            logger.warning(f"      ⚠️  No images met minimum relevance threshold (5.0) across all citations. Best score: {best_score:.2f}")
             return None
         
         # Return the best image across all citations
         best_image = relevant_images[0]
-        print(f"      ✅ Selected best image across all citations (relevance: {best_image['relevance']:.2f}): {best_image['alt'][:50] if best_image['alt'] else 'No alt text'}")
-        print(f"         Source: {best_image.get('source', 'Unknown')[:60]}...")
+        logger.debug(f"      ✅ Selected best image across all citations (relevance: {best_image['relevance']:.2f}): {best_image['alt'][:50] if best_image['alt'] else 'No alt text'}")
+        logger.debug(f"         Source: {best_image.get('source', 'Unknown')[:60]}...")
         
         return best_image['url']
     
     def _fetch_images_from_webpage(self, url: str, section_title: str, topic: str, section_content: str = "", image_description: str = "") -> List[Dict]:
         """Fetch a webpage and extract relevant image URLs. Returns list of candidate images with relevance scores."""
         if not BS4_AVAILABLE:
-            print(f"         ⚠️  BeautifulSoup4 not available. Install with: pip install beautifulsoup4 lxml")
+            logger.warning(f"         ⚠️  BeautifulSoup4 not available. Install with: pip install beautifulsoup4 lxml")
             return []
         
         try:
@@ -723,7 +727,7 @@ Write the expanded content, maintaining ALL existing content and adding substant
             response = requests.get(url, headers=headers, timeout=10, verify=ssl_verify, allow_redirects=True)
             
             if response.status_code != 200:
-                print(f"         ⚠️  HTTP {response.status_code} - Could not fetch page")
+                logger.warning(f"         ⚠️  HTTP {response.status_code} - Could not fetch page")
                 return []
             
             # Parse HTML
@@ -735,7 +739,7 @@ Write the expanded content, maintaining ALL existing content and adding substant
             if not images:
                 return []
             
-            print(f"         📷 Found {len(images)} image(s) on page, analyzing...")
+            logger.debug(f"         📷 Found {len(images)} image(s) on page, analyzing...")
             
             # Extract and filter image URLs
             candidate_images = []
@@ -789,7 +793,7 @@ Write the expanded content, maintaining ALL existing content and adding substant
             candidate_images.sort(key=lambda x: x['quick_score'], reverse=True)
             top_candidates = candidate_images[:5]
             
-            print(f"         🤖 Evaluating top {len(top_candidates)} candidate(s) with LLM for relevance...")
+            logger.debug(f"         🤖 Evaluating top {len(top_candidates)} candidate(s) with LLM for relevance...")
             
             # Use LLM to evaluate top candidates
             for candidate in top_candidates:
@@ -809,10 +813,10 @@ Write the expanded content, maintaining ALL existing content and adding substant
             return top_candidates
             
         except requests.exceptions.RequestException as e:
-            print(f"         ⚠️  Network error fetching page: {str(e)[:100]}")
+            logger.warning(f"         ⚠️  Network error fetching page: {str(e)[:100]}")
             return []
         except Exception as e:
-            print(f"         ⚠️  Error parsing webpage: {str(e)[:100]}")
+            logger.warning(f"         ⚠️  Error parsing webpage: {str(e)[:100]}")
             return []
     
     def _calculate_image_relevance_llm(self, img_url: str, img_alt: str, section_title: str, topic: str, 
@@ -863,7 +867,7 @@ Respond with ONLY a number from 0-10, nothing else."""
                 return self._calculate_image_relevance_keywords(img_url, img_alt, section_title, topic)
                 
         except Exception as e:
-            print(f"         ⚠️  LLM relevance check failed: {str(e)[:50]}. Using keyword-based scoring.")
+            logger.warning(f"         ⚠️  LLM relevance check failed: {str(e)[:50]}. Using keyword-based scoring.")
             return self._calculate_image_relevance_keywords(img_url, img_alt, section_title, topic)
     
     def _calculate_image_relevance_keywords(self, img_url: str, img_alt: str, section_title: str, topic: str) -> float:
@@ -931,7 +935,7 @@ Respond with ONLY a number from 0-10, nothing else."""
         try:
             # Build search query for technical topics
             search_query = f"{topic} {image_description}".strip()[:100]
-            print(f"      🔎 Wikimedia Commons search query: '{search_query}'")
+            logger.debug(f"      🔎 Wikimedia Commons search query: '{search_query}'")
             
             # Wikimedia Commons API endpoint (no API key required)
             url = "https://commons.wikimedia.org/w/api.php"
@@ -961,33 +965,33 @@ Respond with ONLY a number from 0-10, nothing else."""
                 search_results = data.get("query", {}).get("search", [])
                 
                 if search_results:
-                    print(f"      📊 Found {len(search_results)} result(s) in Wikimedia Commons:")
+                    logger.debug(f"      📊 Found {len(search_results)} result(s) in Wikimedia Commons:")
                     for idx, result in enumerate(search_results[:5], 1):
                         file_title = result.get("title", "")
                         size = result.get("size", 0)
-                        print(f"         {idx}. {file_title[:70]}... (size: {size} bytes)")
+                        logger.debug(f"         {idx}. {file_title[:70]}... (size: {size} bytes)")
                     
                     # Get the first result
                     file_title = search_results[0].get("title", "")
-                    print(f"      🔗 Fetching URL for: {file_title[:70]}...")
+                    logger.debug(f"      🔗 Fetching URL for: {file_title[:70]}...")
                     
                     # Get image URL for this file
                     image_url = self._get_wikimedia_file_url(file_title, ssl_verify)
                     
                     if image_url:
-                        print(f"      ✅ Retrieved image URL: {image_url[:80]}...")
+                        logger.debug(f"      ✅ Retrieved image URL: {image_url[:80]}...")
                         return image_url
                     else:
-                        print(f"      ⚠️  Could not retrieve image URL for file")
+                        logger.warning(f"      ⚠️  Could not retrieve image URL for file")
                 else:
-                    print(f"      ℹ️  No results found in Wikimedia Commons")
+                    logger.debug(f"      ℹ️  No results found in Wikimedia Commons")
             else:
-                print(f"      ⚠️  Wikimedia Commons API returned status {response.status_code}")
+                logger.warning(f"      ⚠️  Wikimedia Commons API returned status {response.status_code}")
             
             return None
             
         except Exception as e:
-            print(f"      ❌ Wikimedia Commons API error: {e}")
+            logger.error(f"      ❌ Wikimedia Commons API error: {e}", exc_info=True)
             return None
         finally:
             # Clean up env vars if we disabled verification
@@ -1022,14 +1026,14 @@ Respond with ONLY a number from 0-10, nothing else."""
                         image_url = imageinfo[0].get("thumburl") or imageinfo[0].get("url")
                         if image_url:
                             url_type = "thumbnail" if imageinfo[0].get("thumburl") else "original"
-                            print(f"         ✅ Retrieved {url_type} URL")
+                            logger.debug(f"         ✅ Retrieved {url_type} URL")
                             return image_url
                     else:
-                        print(f"         ⚠️  No imageinfo found for file")
+                        logger.warning(f"         ⚠️  No imageinfo found for file")
             
             return None
         except Exception as e:
-            print(f"         ❌ Error retrieving file URL: {e}")
+            logger.error(f"         ❌ Error retrieving file URL: {e}", exc_info=True)
             return None
     
     def _get_image_description(self, section_title: str, topic: str, section_content: str = "") -> str:
@@ -1065,7 +1069,7 @@ Generate ONLY the image description text, nothing else."""
                 return f"Visual illustration or diagram related to {section_title} in the context of {topic}. The image should support and enhance the content of this section by providing visual context that helps readers better understand the concepts discussed."
             return description
         except Exception as e:
-            print(f"      ⚠️  Error generating image description with LLM: {e}. Using fallback description.")
+            logger.warning(f"      ⚠️  Error generating image description with LLM: {e}. Using fallback description.")
             # Fallback description
             return f"Visual illustration or diagram related to {section_title} in the context of {topic}. The image should support and enhance the content of this section by providing visual context that helps readers better understand the concepts discussed."
     

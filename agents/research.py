@@ -1,14 +1,16 @@
 """Research Agent: Gathers facts, statistics, and citations."""
 import os
-import sys
 from typing import Dict, Any, List, Optional
 from .base import BaseAgent
+from utils.logger import get_logger
 
 try:
     from tavily import TavilyClient
     TAVILY_AVAILABLE = True
 except ImportError:
     TAVILY_AVAILABLE = False
+
+logger = get_logger(__name__)
 
 
 class ResearchAgent(BaseAgent):
@@ -29,14 +31,15 @@ class ResearchAgent(BaseAgent):
             os.environ['REQUESTS_CA_BUNDLE'] = ''
         
         tavily_api_key = os.getenv("TAVILY_API_KEY")
-        print(f"Tavily API key: {tavily_api_key}", file=sys.stderr, flush=True)
+        logger.debug(f"Tavily API key configured: {'Yes' if tavily_api_key else 'No'}")
         if TAVILY_AVAILABLE and tavily_api_key and tavily_api_key.strip():
             try:
-                print(f"Initializing Tavily client with API key: {tavily_api_key.strip()}", file=sys.stderr, flush=True)
+                logger.debug("Initializing Tavily client")
                 self.tavily_client = TavilyClient(api_key=tavily_api_key.strip())
+                logger.info("Tavily client initialized successfully")
             except Exception as e:
-                print(f"Error: {e}", file=sys.stderr, flush=True)
-                print(f"Warning: Could not initialize Tavily client: {e}", file=sys.stderr, flush=True)
+                logger.error(f"Error initializing Tavily client: {e}", exc_info=True)
+                logger.warning(f"Could not initialize Tavily client: {e}")
                 pass
     
     def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -55,7 +58,7 @@ class ResearchAgent(BaseAgent):
             - research_summary: str
         """
 
-        print(f"Processing research with input data: {input_data}", file=sys.stderr, flush=True)
+        logger.debug(f"Processing research with input data: {input_data}")
         from agents.base import _thought_callback
         import time
         
@@ -77,27 +80,24 @@ class ResearchAgent(BaseAgent):
         
         # Check if web search is enabled
         enable_web_search = input_data.get("enable_web_search", True)
-        print(f"Enable web search: {enable_web_search}", file=sys.stderr, flush=True)
+        logger.debug(f"Enable web search: {enable_web_search}")
         
         # Perform web searches
         if self.tavily_client and enable_web_search:
-            print(f"Performing web searches with Tavily client: {self.tavily_client}", file=sys.stderr, flush=True)
-            print(f"SSL verification: {self.ssl_verify}", file=sys.stderr, flush=True)
+            logger.debug(f"Performing web searches with Tavily client (SSL verification: {self.ssl_verify})")
             # Handle SSL verification for Tavily API calls
             if not self.ssl_verify:
                 import urllib3
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-            print(f"Performing web searches with SSL verification: {self.ssl_verify}", file=sys.stderr, flush=True)
             # Calculate how many results per query to get
             num_queries = min(len(search_queries), 5)  # Limit to 5 queries
             results_per_query = max(1, max_sources // num_queries) if num_queries > 0 else max_sources
             # Cap at 5 results per query to avoid too many results
             results_per_query = min(5, results_per_query)
-            print(f"Results per query: {results_per_query}", file=sys.stderr, flush=True)
+            logger.debug(f"Results per query: {results_per_query}")
             for query in search_queries[:num_queries]:
-                print(f"Searching for query: {query}", file=sys.stderr, flush=True)
+                logger.debug(f"Searching for query: {query}")
                 try:
-                    print(f"Trying to search for query: {query}", file=sys.stderr, flush=True)
                     # Temporarily disable SSL verification for this request if needed
                     if not self.ssl_verify:
                         import requests
@@ -138,12 +138,12 @@ class ResearchAgent(BaseAgent):
                 except Exception as e:
                     error_msg = str(e).lower()
                     if "ssl" in error_msg or "certificate" in error_msg:
-                        print(f"⚠️  SSL error for query '{query}'. Web search may be disabled.", file=sys.stderr, flush=True)
-                        print(f"   Ensure SSL_VERIFY=false is set in .env file", file=sys.stderr, flush=True)
+                        logger.warning(f"⚠️  SSL error for query '{query}'. Web search may be disabled.")
+                        logger.warning("   Ensure SSL_VERIFY=false is set in .env file")
                     else:
-                        print(f"Search error for query '{query}': {e}", file=sys.stderr, flush=True)
+                        logger.error(f"Search error for query '{query}': {e}", exc_info=True)
         else:
-            print(f"No Tavily client or web search is disabled", file=sys.stderr, flush=True)
+            logger.debug("No Tavily client or web search is disabled")
         
         # Check local sources directory
         local_sources = self._load_local_sources(topic)
@@ -174,7 +174,7 @@ class ResearchAgent(BaseAgent):
             else:
                 warning_msg = "⚠️  No sources found. Blog will be generated without citations."
             
-            print(f"\n{warning_msg}\n", file=sys.stderr, flush=True)
+            logger.warning(warning_msg)
             if _thought_callback:
                 _thought_callback("Research", warning_msg)
         

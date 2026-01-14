@@ -22,9 +22,12 @@ from utils import (
     extract_images_from_markdown,
     remove_duplicate_headers
 )
+from utils.logger import get_logger
 from database import get_database
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 
 class BlogGenerator:
@@ -76,6 +79,7 @@ class BlogGenerator:
             result = agent.process(input_data)
             if result.get("status") != "success":
                 error_msg = result.get("message", "Unknown error")
+                logger.error(f"{step_name.capitalize()} failed: {error_msg}")
                 return {
                     "status": "error",
                     "message": f"{step_name.capitalize()} failed: {error_msg}",
@@ -84,6 +88,7 @@ class BlogGenerator:
             return result
         except Exception as e:
             error_msg = str(e)
+            logger.exception(f"Exception in {step_name} step")
             if "Connection" in error_msg or "connection" in error_msg:
                 return {
                     "status": "error",
@@ -113,7 +118,7 @@ class BlogGenerator:
         Returns:
             Dictionary containing the generated blog and metadata
         """
-        print(f"\n🚀 Starting blog generation for: {topic}\n")
+        logger.info(f"🚀 Starting blog generation for: {topic}")
         
         # Always reload system settings from database (single source of truth)
         db = get_database()
@@ -142,7 +147,7 @@ class BlogGenerator:
                     config[key] = system_settings[key]
         
         # Step 1: Planning
-        print("📋 Step 1/7: Planning blog structure...")
+        logger.info("📋 Step 1/7: Planning blog structure...")
         plan_result = self._run_agent_step(
             agent=self.planner,
             step_name="planner",
@@ -158,10 +163,10 @@ class BlogGenerator:
             return plan_result
         
         plan = plan_result["plan"]
-        print(f"✓ Created outline with {len(plan.get('outline', []))} sections\n")
+        logger.info(f"✓ Created outline with {len(plan.get('outline', []))} sections")
         
         # Step 2: Research
-        print("🔍 Step 2/7: Conducting research...")
+        logger.info("🔍 Step 2/7: Conducting research...")
         research_result = self.research.process({
             "search_queries": plan.get("search_queries", []),
             "required_facts": plan.get("required_facts", []),
@@ -173,10 +178,10 @@ class BlogGenerator:
         if research_result.get("status") != "success":
             return {"status": "error", "message": "Research failed", "step": "research"}
         
-        print(f"✓ Found {research_result.get('sources_count', 0)} sources\n")
+        logger.info(f"✓ Found {research_result.get('sources_count', 0)} sources")
         
         # Step 3: Writing
-        print("✍️  Step 3/7: Writing content...")
+        logger.info("✍️  Step 3/7: Writing content...")
         writer_result = self.writer.process({
             "outline": plan.get("outline", []),
             "thesis": plan.get("thesis", ""),
@@ -194,10 +199,10 @@ class BlogGenerator:
         if writer_result.get("status") != "success":
             return {"status": "error", "message": "Writing failed", "step": "writer"}
         
-        print(f"✓ Wrote {writer_result.get('word_count', 0)} words across {writer_result.get('sections_written', 0)} sections\n")
+        logger.info(f"✓ Wrote {writer_result.get('word_count', 0)} words across {writer_result.get('sections_written', 0)} sections")
         
         # Step 4: Editing
-        print("✏️  Step 4/7: Editing and refining...")
+        logger.info("✏️  Step 4/7: Editing and refining...")
         editor_result = self.editor.process({
             "content": writer_result.get("content", {}),
             "tone": config.get("tone"),
@@ -209,21 +214,21 @@ class BlogGenerator:
             return {"status": "error", "message": "Editing failed", "step": "editor"}
         
         improvements = editor_result.get("improvements", [])
-        print(f"✓ Applied {len(improvements)} improvements: {', '.join(improvements)}\n")
+        logger.info(f"✓ Applied {len(improvements)} improvements: {', '.join(improvements)}")
         
         # Check if images were preserved after editing, restore if needed
         edited_content = editor_result.get("edited_content", {})
         has_images = any("![" in content or "Image needed:" in content for content in edited_content.values())
         if not has_images:
             # Re-add image descriptions if they were removed during editing
-            print("📷 Restoring image descriptions that may have been removed during editing...")
+            logger.info("📷 Restoring image descriptions that may have been removed during editing...")
             from agents.writer import WriterAgent
             temp_writer = WriterAgent()
             edited_content = temp_writer._add_images_to_content(edited_content, topic, plan.get("outline", []))
             editor_result["edited_content"] = edited_content
         
         # Step 5: Humanize Content (Remove AI-generated patterns)
-        print("✍️  Step 5/7: Humanizing content (removing AI-generated patterns)...")
+        logger.info("✍️  Step 5/7: Humanizing content (removing AI-generated patterns)...")
         humanizer_result = self.humanizer.process({
             "content": editor_result.get("edited_content", {}),
             "tone": config.get("tone"),
@@ -234,10 +239,10 @@ class BlogGenerator:
             return {"status": "error", "message": "Humanization failed", "step": "humanizer"}
         
         humanizer_improvements = humanizer_result.get("improvements", [])
-        print(f"✓ Humanization complete. Made content sound more natural and human-written.\n")
+        logger.info("✓ Humanization complete. Made content sound more natural and human-written.")
         
         # Step 6: SEO Optimization
-        print("🔎 Step 6/7: Optimizing for SEO...")
+        logger.info("🔎 Step 6/7: Optimizing for SEO...")
         seo_result = self.seo.process({
             "content": humanizer_result.get("humanized_content", {}),
             "topic": topic,
@@ -249,10 +254,10 @@ class BlogGenerator:
         if seo_result.get("status") != "success":
             return {"status": "error", "message": "SEO optimization failed", "step": "seo"}
         
-        print(f"✓ SEO optimization complete. Keyword density: {seo_result.get('keyword_density', {})}\n")
+        logger.info(f"✓ SEO optimization complete. Keyword density: {seo_result.get('keyword_density', {})}")
         
         # Step 7: Fact-checking & Safety (always enabled)
-        print("✅ Step 7/7: Fact-checking and safety review...")
+        logger.info("✅ Step 7/7: Fact-checking and safety review...")
         fact_check_result = self._run_agent_step(
             agent=self.fact_check,
             step_name="fact_check",
@@ -270,7 +275,7 @@ class BlogGenerator:
             return fact_check_result
         
         verification_score = fact_check_result.get("verification_score", 0)
-        print(f"✓ Fact-checking complete. Verification score: {verification_score:.2%}\n")
+        logger.info(f"✓ Fact-checking complete. Verification score: {verification_score:.2%}")
         
         # Compile final blog
         final_blog = self._compile_final_blog(
@@ -284,8 +289,8 @@ class BlogGenerator:
         # Save blog
         output_file = self._save_blog(final_blog, topic)
         
-        print(f"🎉 Blog generation complete!\n")
-        print(f"📄 Output saved to: {output_file}\n")
+        logger.info("🎉 Blog generation complete!")
+        logger.info(f"📄 Output saved to: {output_file}")
         
         # Calculate word count excluding references and FAQ
         content_word_count = 0

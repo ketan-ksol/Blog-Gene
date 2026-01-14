@@ -4,8 +4,11 @@ from typing import Dict, Any, Optional, Callable
 from langchain_openai import ChatOpenAI
 import os
 from dotenv import load_dotenv
+from utils.logger import get_logger
 
 load_dotenv()
+
+logger = get_logger(__name__)
 
 # Global callback for capturing AI thoughts
 _thought_callback: Optional[Callable[[str, str], None]] = None
@@ -88,7 +91,7 @@ class BaseAgent(ABC):
                 timeout=120
             )
             llm_kwargs["http_client"] = custom_client
-            print("⚠️  WARNING: SSL certificate verification is disabled. This reduces security.")
+            logger.warning("⚠️  WARNING: SSL certificate verification is disabled. This reduces security.")
         
         self.llm = ChatOpenAI(**llm_kwargs)
     
@@ -147,7 +150,7 @@ class BaseAgent(ABC):
                 # Check for specific error types
                 if "connection" in error_msg or "timeout" in error_msg or "network" in error_msg or "connect" in error_msg or "ConnectError" in error_type:
                     if attempt < max_retries - 1:
-                        print(f"⚠️  Connection error (attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay}s...")
+                        logger.warning(f"⚠️  Connection error (attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay}s...")
                         time.sleep(retry_delay)
                         retry_delay *= 2  # Exponential backoff
                         continue
